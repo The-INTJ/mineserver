@@ -13,7 +13,8 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     proxy: {
-      "/api": {
+      // Regex so `/api.ts` (the UI module) is not proxied; only real API paths are.
+      "^/api/": {
         target: "http://127.0.0.1:3400",
         changeOrigin: false,
       },

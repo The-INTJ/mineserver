@@ -1,0 +1,5 @@
+# Normalise line endings in the repo; Prettier writes LF, Windows checkouts can autocrlf.
+* text=auto eol=lf
+*.jar binary
+*.png binary
+*.exe binary

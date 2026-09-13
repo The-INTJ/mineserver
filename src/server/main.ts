@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import readline from "node:readline";
+import { isatty } from "node:tty";
 import { DAEMON_PORT } from "../shared/constants.ts";
 import { createApp } from "./app.ts";
 import { createContext } from "./context.ts";
@@ -32,7 +33,6 @@ async function main() {
   });
 
   // Never orphan the Java child: if the daemon dies, the server goes with it (and the tunnel).
-  // Ctrl+C in Git Bash/PowerShell on Windows doesn't reliably raise SIGINT, hence the readline shim.
   let shuttingDown = false;
   const shutdown = async (why: string) => {
     if (shuttingDown) return;
@@ -54,7 +54,10 @@ async function main() {
     ctx.server.killSync();
     ctx.tunnel.killSync();
   });
-  if (process.platform === "win32" && process.stdin.isTTY) {
+  // Ctrl+C in a Windows console doesn't reliably raise SIGINT; readline does. Check the fd with
+  // isatty() rather than `process.stdin.isTTY`: merely *creating* process.stdin blocks forever on
+  // Windows when stdin is a pipe with no writer (how the app's preview runner spawns us).
+  if (process.platform === "win32" && isatty(0)) {
     readline
       .createInterface({ input: process.stdin, output: process.stdout })
       .on("SIGINT", () => process.emit("SIGINT"));
