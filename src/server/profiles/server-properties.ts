@@ -4,8 +4,6 @@
  */
 
 export const FORCED_PROPERTIES: Record<string, string> = {
-  // The active world is always the `world` junction under data/server.
-  "level-name": "world",
   // The tunnel address is public; the whitelist is the only thing keeping strangers out.
   "white-list": "true",
   "enforce-whitelist": "true",
@@ -54,12 +52,20 @@ export function serializeProperties(doc: PropertiesDoc): string {
   return body.endsWith("\n") ? body : body + "\n";
 }
 
-/** Template + profile overrides + forced keys. */
+/**
+ * Template + profile overrides + forced keys. `levelName` is forced too: "world" when the runtime
+ * uses the junction, or a relative path into data/worlds (see runtimes.worldMode).
+ */
 export function buildServerProperties(
   template: string,
   overrides: Record<string, string>,
+  levelName = "world",
 ): { text: string; effective: Record<string, string> } {
-  const merged = mergeProperties(parseProperties(template), { ...overrides, ...FORCED_PROPERTIES });
+  const merged = mergeProperties(parseProperties(template), {
+    ...overrides,
+    ...FORCED_PROPERTIES,
+    "level-name": levelName,
+  });
   return { text: serializeProperties(merged), effective: toRecord(merged) };
 }
 

@@ -10,8 +10,11 @@ export interface Classified {
 
 // Vanilla:  [12:34:56] [Server thread/INFO]: Done (3.456s)! For help, type "help"
 // Fabric:   [12:34:56] [Server thread/INFO] (Minecraft) Done (3.456s)! ...  (logger in parens, no colon)
+// Forge:    [12:34:56] [Server thread/INFO] [net.minecraft.server.dedicated.DedicatedServer/]: Done (18.390s)! ...
+//           (logger in a second bracket pair; missing this one kept a healthy Forge server in
+//           "starting" until the quiet watchdog killed it — verified 2026-09-13)
 const PREFIX =
-  /^\[\d\d:\d\d:\d\d\] \[[^\]]*\/(INFO|WARN|ERROR|FATAL|DEBUG)\]:? (?:\([^)]*\) )?(.*)$/;
+  /^\[\d\d:\d\d:\d\d\] \[[^\]]*\/(INFO|WARN|ERROR|FATAL|DEBUG)\](?: \[[^\]]*\])?:? (?:\([^)]*\) )?(.*)$/;
 
 const DONE = /^Done \([\d.,]+s\)!/;
 const JOIN = /^(\S+) joined the game$/;
@@ -20,7 +23,7 @@ const LOST = /^(\S+) lost connection: /;
 const CHAT = /^<(\S+)> /;
 const EULA = /agree to the EULA/i;
 const CRASH =
-  /(Encountered an unexpected exception|Crash report saved to|#@!@# Game crashed|This crash report has been saved to)/;
+  /(Encountered an unexpected exception|Crash report saved to|#@!@# Game crashed|This crash report has been saved to|Failed to start the minecraft server|Error during pre-loading phase)/;
 
 export function classify(raw: string): Classified {
   const m = PREFIX.exec(raw);

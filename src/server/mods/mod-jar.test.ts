@@ -99,4 +99,20 @@ describe("readModManifest", () => {
       parseModsToml('[[mods]]\nmodId = "a"\nversion = "1.2.3"\n[[mods]]\nmodId="b"', "forge"),
     ).toMatchObject({ ok: true, id: "a", version: "1.2.3" });
   });
+  it("parses the inline mods = [ { ... } ] form used by lowcodefml datapack mods", () => {
+    const toml = [
+      "modLoader = 'lowcodefml'",
+      "mods = [",
+      "	{ modId = 'mvs', version = '5.0.4', displayName = \"Moog's Voyager Structures\", logoBlur = false },",
+      "]",
+      "[[dependencies.mvs]]",
+      'modId = "moogs_structures"',
+    ].join("\n");
+    expect(parseModsToml(toml, "forge")).toMatchObject({
+      ok: true,
+      id: "mvs",
+      version: "5.0.4",
+      name: "Moog's Voyager Structures",
+    });
+  });
 });

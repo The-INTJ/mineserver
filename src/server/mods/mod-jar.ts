@@ -164,6 +164,17 @@ export function parseModsToml(text: string, loader: "forge" | "neoforge"): Parse
       v = v.slice(1, -1);
     vals[m[1]] = v;
   }
+  if (!vals.modId) {
+    // "lowcodefml" datapack-mods use the inline-array form: mods = [ { modId = 'x', version = '1', ... } ]
+    const inline = /mods\s*=\s*\[\s*\{([^}]*)\}/.exec(text);
+    if (inline) {
+      for (const m of inline[1].matchAll(
+        /([A-Za-z0-9_]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^,}\s]+))/g,
+      )) {
+        vals[m[1]] = m[2] ?? m[3] ?? m[4] ?? "";
+      }
+    }
+  }
   if (!vals.modId) return { ok: false, error: "mods.toml has no [[mods]] modId" };
   const version = vals.version && !vals.version.startsWith("${") ? vals.version : "?";
   return {

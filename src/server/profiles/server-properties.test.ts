@@ -45,3 +45,14 @@ view-distance=12
     expect(toRecord(parseProperties("a=1\n! bang\nb: 2\n#c=3\n"))).toEqual({ a: "1", b: "2" });
   });
 });
+
+describe("buildServerProperties level-name", () => {
+  it("uses the relative world path when asked (Forge/NeoForge runtimes)", () => {
+    const { effective } = buildServerProperties(
+      "level-name=world\n",
+      {},
+      "../../worlds/sunlit-valley",
+    );
+    expect(effective["level-name"]).toBe("../../worlds/sunlit-valley");
+  });
+});

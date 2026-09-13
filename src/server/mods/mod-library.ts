@@ -5,7 +5,7 @@ import { assertSafeSegment, readJson, writeJsonAtomic } from "../fsx.ts";
 import { badRequest, notFound } from "../errors.ts";
 import { readModManifest } from "./mod-jar.ts";
 
-const INDEX_VERSION = 2;
+const INDEX_VERSION = 3;
 
 interface Index {
   version?: number;

@@ -2,6 +2,23 @@ import { describe, expect, it } from "vitest";
 import { classify } from "./log-classify.ts";
 
 describe("classify", () => {
+  it("detects the Done line and player events in the Forge log format", () => {
+    const forge = (msg: string) =>
+      `[19:36:33] [Server thread/INFO] [net.minecraft.server.dedicated.DedicatedServer/]: ${msg}`;
+    expect(classify(forge('Done (18.390s)! For help, type "help"')).kind).toBe("done");
+    expect(classify(forge("Steve joined the game"))).toMatchObject({
+      kind: "join",
+      player: "Steve",
+    });
+    expect(classify(forge("Steve left the game"))).toMatchObject({
+      kind: "leave",
+      player: "Steve",
+    });
+    expect(
+      classify("[19:36:33] [main/WARN] [mixin/]: Mixin config x does not specify minVersion").level,
+    ).toBe("WARN");
+  });
+
   it("detects the Done line in vanilla and Fabric formats", () => {
     expect(
       classify('[12:00:00] [Server thread/INFO]: Done (3.456s)! For help, type "help"').kind,
@@ -38,6 +55,11 @@ describe("classify", () => {
       classify("[12:00:00] [Server thread/ERROR]: Encountered an unexpected exception").kind,
     ).toBe("crash");
     expect(classify("[12:00:00] [Server thread/FATAL]: anything").kind).toBe("crash");
+    expect(
+      classify(
+        "[19:21:30] [main/ERROR] [net.minecraft.server.Main/FATAL]: Failed to start the minecraft server",
+      ).kind,
+    ).toBe("crash");
   });
 
   it("classifies chat and levels; raw lines pass through", () => {

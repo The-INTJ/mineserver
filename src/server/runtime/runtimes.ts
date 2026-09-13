@@ -111,3 +111,16 @@ export function loaderCompatible(jarLoaders: readonly string[] | undefined, rt: 
   if (!jarLoaders || jarLoaders.length === 0) return true;
   return jarLoaders.includes(rt.loader);
 }
+
+/**
+ * How the active world reaches the server dir.
+ *   "junction":   <runtime>/world is a directory junction to data/worlds/<name> (level-name=world).
+ *   "level-name": no link; level-name is a relative path into data/worlds. Needed on 1.20.x/1.21.x:
+ *                 their DirectoryValidator reads the path with NOFOLLOW_LINKS, and Java reports a
+ *                 Windows junction as "other" (not a symlink, not a directory), so the server
+ *                 refuses it with "Path .\world is not a directory" regardless of allowed_symlinks.
+ *                 26.x accepts the junction, so Fabric keeps the link (verified on both).
+ */
+export function worldMode(rt: Runtime): "junction" | "level-name" {
+  return rt.loader === "fabric" ? "junction" : "level-name";
+}

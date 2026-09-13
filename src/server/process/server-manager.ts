@@ -11,7 +11,7 @@ import { applyModPlan, planMods } from "../profiles/materialize.ts";
 import type { ProfileStore } from "../profiles/profile-store.ts";
 import { buildServerProperties } from "../profiles/server-properties.ts";
 import type { RuntimeStore } from "../runtime/runtime-store.ts";
-import { loaderCompatible, runtimeId } from "../runtime/runtimes.ts";
+import { loaderCompatible, runtimeId, worldMode } from "../runtime/runtimes.ts";
 import type { StateStore } from "../state-store.ts";
 import type { WorldStore } from "../worlds/world-store.ts";
 import { JavaProcess } from "./java-process.ts";
@@ -31,6 +31,8 @@ export interface ServerManagerDeps {
 }
 
 const KEEP_LOG_FILES = 30;
+/** Longest silence tolerated during boot. Real boots print at least every few seconds. */
+const STARTUP_QUIET_KILL_MS = 120_000;
 
 /**
  * The state machine that owns the Java child. Everything else (routes, MCP, UI) reads
@@ -107,10 +109,21 @@ export class ServerManager extends EventEmitter {
     }
     const spawnSpec = this.deps.spawnOverride ?? (await runtimes.launchSpec(rt, profile.jvm));
 
-    // 1. World junction.
-    await worlds.link(profile.world, rp.worldLink);
+    // 1. World. Fabric 26.x: junction at <runtime>/world. Forge/NeoForge (1.20.x/1.21.x): no
+    //    link, level-name points into data/worlds by relative path (see runtimes.worldMode for
+    //    the Java-vs-junction reason). Either way the world dir is created if missing.
+    let levelName = "world";
+    if (worldMode(rt) === "junction") {
+      await worlds.link(profile.world, rp.worldLink);
+    } else {
+      const worldDir = await worlds.ensure(profile.world);
+      levelName = path.relative(rp.dir, worldDir).split(path.sep).join("/");
+      // A leftover junction from an earlier attempt would confuse the validator; drop it.
+      const st = await fs.lstat(rp.worldLink).catch(() => null);
+      if (st?.isSymbolicLink()) await fs.rm(rp.worldLink, { force: true });
+    }
     logs.note(
-      `profile "${profile.name}" (${profile.id}); runtime ${runtimeId(rt)}; world "${profile.world}"`,
+      `profile "${profile.name}" (${profile.id}); runtime ${runtimeId(rt)}; world "${profile.world}" (level-name=${levelName})`,
     );
 
     // 2. Mods: rebuild <runtime>/mods from the library, skipping jars built for another loader.
@@ -139,7 +152,7 @@ export class ServerManager extends EventEmitter {
       path.join(this.deps.paths.templates, "server.properties.default"),
       "utf8",
     );
-    const built = buildServerProperties(template, profile.properties);
+    const built = buildServerProperties(template, profile.properties, levelName);
     await fs.writeFile(rp.properties, built.text, "utf8");
     this.lastEffectiveProperties = built.effective;
 
@@ -179,6 +192,10 @@ export class ServerManager extends EventEmitter {
         logs.note(`still starting after ${READY_TIMEOUT_MS / 60000} min; check the log for a hang`);
       }
     }, READY_TIMEOUT_MS);
+    // A booting server logs continuously (mod loading, registry loading, spawn chunks). Silence
+    // while still "starting" means main() threw and only non-daemon threads (Forge's version
+    // checker, mod thread pools) keep the JVM alive. Kill it so the state machine can report.
+    this.armQuietWatchdog(proc);
     return this.getState();
   }
 
@@ -238,7 +255,31 @@ export class ServerManager extends EventEmitter {
 
   // ---- internals -------------------------------------------------------------------------
 
+  private quietTimer: NodeJS.Timeout | null = null;
+  private lastLineAt = 0;
+
+  private armQuietWatchdog(proc: JavaProcess): void {
+    if (this.quietTimer) clearInterval(this.quietTimer);
+    this.lastLineAt = Date.now();
+    this.quietTimer = setInterval(() => {
+      if (this.proc !== proc || !proc.alive || this.state.status !== "starting") {
+        if (this.quietTimer) clearInterval(this.quietTimer);
+        this.quietTimer = null;
+        return;
+      }
+      if (Date.now() - this.lastLineAt > STARTUP_QUIET_KILL_MS) {
+        this.deps.logs.note(
+          `no output for ${STARTUP_QUIET_KILL_MS / 1000}s while starting; assuming a failed boot and killing the JVM`,
+        );
+        if (!this.state.lastStopReason)
+          this.setState({ lastStopReason: "startup hung (no output)" });
+        void proc.kill();
+      }
+    }, 5_000);
+  }
+
   private onLine(stream: "stdout" | "stderr", text: string): void {
+    this.lastLineAt = Date.now();
     const line = this.deps.logs.push(stream, text);
     this.logFile?.write(line);
     switch (line.kind) {
@@ -261,6 +302,20 @@ export class ServerManager extends EventEmitter {
         break;
       case "crash":
         if (!this.state.lastStopReason) this.setState({ lastStopReason: line.text.slice(0, 200) });
+        // Forge servers often don't exit after "Failed to start": non-daemon version-check
+        // threads keep the JVM alive forever. Give it a moment to write reports, then kill.
+        if (
+          this.state.status === "starting" &&
+          /Failed to start the minecraft server/i.test(line.text)
+        ) {
+          const proc = this.proc;
+          setTimeout(() => {
+            if (proc && proc.alive && this.proc === proc) {
+              this.deps.logs.note("server failed to start and did not exit; killing it");
+              void proc.kill();
+            }
+          }, 15_000);
+        }
         break;
     }
   }

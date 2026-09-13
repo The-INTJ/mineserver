@@ -7,8 +7,10 @@ the Java server process; a React UI (localhost only) and an MCP server both driv
 HTTP API. Built for: two people playing on the LAN, one friend joining through a playit.gg tunnel,
 mods swapped often, worlds kept separate, zero hosting cost. Public repo, MIT.
 
-Pinned: Minecraft **26.2**, Fabric loader **0.19.5**, installer **1.1.2**, Java **25+**, playit agent
-**0.17.1**. All in `src/shared/constants.ts`; bump together.
+Runtimes are per profile: `{loader: fabric|forge|neoforge, minecraft, loaderVersion}`. Presets in
+`src/shared/constants.ts` (Fabric 26.2 / 0.19.5 is the default; Forge 1.20.1 / 47.4.0 is the modpack
+LTS). Each `<loader>-<mc>` gets its own dir under `data/servers/` and its own JDK (25 for 26.x, 21 for
+1.21, 17 for 1.20.1), chosen by `src/server/runtime/runtimes.ts`. playit agent pinned at **0.17.1**.
 
 ## Architecture
 
@@ -16,9 +18,12 @@ Pinned: Minecraft **26.2**, Fabric loader **0.19.5**, installer **1.1.2**, Java 
 src/shared/    types + constants. Runtime-neutral: no Node, no React. The contract for everything.
 src/server/    the daemon (Hono on 127.0.0.1:3400). Owns data/, the Java child, the playit child.
   process/     JavaProcess (spawn/stdin/taskkill), LogBuffer (ring + SSE source), ServerManager (state machine)
+  runtime/     runtimes.ts (pure: ids, URLs, Java majors, launch args), RuntimeStore (install, JDK pick, per-runtime dirs)
   profiles/    ProfileStore (JSON files), materialize (hardlink plan), server-properties (merge + forced keys)
-  mods/        ModLibrary (data/mods/library + cached fabric.mod.json metadata), mod-jar (yauzl reader)
-  worlds/      WorldStore: data/worlds/<name>, import-from-saves (copy), junction at data/server/world
+  mods/        ModLibrary (data/mods/library + cached manifest metadata), mod-jar (fabric.mod.json / mods.toml), mrpack (Modrinth packs)
+  worlds/      WorldStore: data/worlds/<name>, import-from-saves (copy), junction at <runtime>/world
+  jobs.ts      in-memory registry for long work (modpack import, runtime install); UI/MCP poll it
+  whitelist.ts Mojang UUID lookup + whitelist.json in every runtime dir
   export/      client zip (server-only mods excluded) and "sync my client" (copy into .minecraft/mods)
   tunnel/      TunnelManager (off | playit | external), PlayitProvider (install/claim/run), pure parsers
   routes/      one Hono sub-app per area; app.ts mounts them under /api and serves dist/ui
@@ -67,6 +72,28 @@ forced `level-name=world`, `white-list=true`) → open a log file → spawn Java
 - **The whitelist is the only lock on the door** once a tunnel is up. `white-list=true` is forced.
 - **A world remembers its mods**: removing a block-adding mod turns its blocks into air. The UI warns; the
   code does not prevent it.
+- **Multi-loader jars are real.** "QuiFabrge" and merged jars carry fabric.mod.json AND mods.toml;
+  some Forge jars also ship neoforge.mods.toml. Detection records *every* loader (`ModEntry.loaders`);
+  compatibility is "includes the runtime's loader". Tagging by first manifest found skipped 10 real
+  Sunlit Valley dependencies (verified 2026-09-13).
+- **Modpack env flags are the pack author's opinion.** A client-only mod marked `server: required`
+  gets loaded on the server; a missing library (Sunlit Valley 4.1.5 omits FTB Library that `gag`
+  needs) gets reported by Forge's ModSorter on boot. Read the first 30 s of the log after an import.
+- **Java does not see a Windows junction as a symlink.** `BasicFileAttributes` reports it as
+  "other", so 1.20.x/1.21.x `DirectoryValidator` (NOFOLLOW_LINKS) rejects `<runtime>/world` with
+  "Path .\world is not a directory" and `allowed_symlinks.txt` never applies. Hence
+  `runtimes.worldMode()`: Fabric 26.x keeps the junction (works), Forge/NeoForge use
+  `level-name=../../worlds/<name>`. Node's lstat *does* call a junction a symlink; don't be fooled.
+- **A Modrinth .mrpack can be a subset of the CurseForge edition.** Modrinth packs may only
+  reference Modrinth-hosted files, so CurseForge-exclusive mods (FTB Quests/Teams/Chunks, Pam's,
+  SewingKit…) silently vanish while the pack's KubeJS data still references them → "Unbound values
+  in registry" / "Failed to parse …structure_set…" on boot. Sunlit Valley: 312 Modrinth files vs
+  367 CurseForge. The CF manifest (`projectID`/`fileID`) resolves to filenames via the keyless
+  `curseforge.com/api/v1/mods/<p>/files/<f>/download` redirect. (Scratch script only so far; a
+  proper "import CurseForge pack" job is the obvious next feature.)
+- **A Forge JVM that fails to boot usually doesn't exit.** Version-check and mod thread pools are
+  non-daemon. `ServerManager` kills it 15 s after "Failed to start the minecraft server" and, as a
+  fallback, after 120 s of no stdout while still `starting`.
 - **`npm run dev` hard-kills the game server on every source edit.** tsx watch restarts the daemon, and
   the daemon's exit hook (deliberately) takes the Java child with it, without a graceful `stop`
   (verified 2026-09-13: no orphan, but no "Saving chunks" either). While people are playing, run
