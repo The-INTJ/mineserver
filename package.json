@@ -12,6 +12,8 @@
   "scripts": {
     "dev": "concurrently -k -n daemon,ui -c blue,magenta \"npm:dev:daemon\" \"npm:dev:ui\"",
     "dev:daemon": "tsx watch src/server/main.ts",
+    "daemon": "tsx src/server/main.ts",
+    "play": "npm run build && node dist/server/main.js",
     "dev:ui": "vite --port 3401 --strictPort",
     "build": "npm run build:node && npm run build:ui",
     "build:node": "tsc -p tsconfig.node.json",

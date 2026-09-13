@@ -32,11 +32,13 @@ free [playit.gg](https://playit.gg) tunnel, mods swapped constantly, several wor
 git clone https://github.com/The-INTJ/mineserver.git
 cd mineserver
 npm install
-npm run dev
+npm run play
 ```
 
-Open http://127.0.0.1:3401. The UI binds to localhost only; the game port is the only thing that is
-ever exposed.
+Open http://127.0.0.1:3400. The UI binds to localhost only; the game port is the only thing that is
+ever exposed. (`npm run dev` is the hot-reloading variant for working on mineserver itself, on
+http://127.0.0.1:3401. It restarts the daemon, and therefore the game server, whenever you edit a
+source file, so don't use it while people are playing.)
 
 ### Step 2: First-run checklist
 
@@ -78,9 +80,10 @@ diagnosis playbook.
 ## Development
 
 ```bash
-npm run dev      # daemon :3400 + UI :3401
+npm run dev      # daemon :3400 + hot-reloading UI :3401 (restarts the game server on edits)
+npm run play     # build, then serve the built UI + API on :3400 (use this to actually play)
 npm run check    # typecheck, lint, tests, build
-npm start        # production: built daemon serves the built UI on :3400
+npm start        # built daemon without rebuilding
 ```
 
 ## License

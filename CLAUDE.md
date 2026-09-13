@@ -67,13 +67,18 @@ forced `level-name=world`, `white-list=true`) → open a log file → spawn Java
 - **The whitelist is the only lock on the door** once a tunnel is up. `white-list=true` is forced.
 - **A world remembers its mods**: removing a block-adding mod turns its blocks into air. The UI warns; the
   code does not prevent it.
+- **`npm run dev` hard-kills the game server on every source edit.** tsx watch restarts the daemon, and
+  the daemon's exit hook (deliberately) takes the Java child with it, without a graceful `stop`
+  (verified 2026-09-13: no orphan, but no "Saving chunks" either). While people are playing, run
+  `npm run play` (built, no watch) or `npm run daemon` (tsx, no watch) and don't edit code.
 
 ## Development
 
 ```
-npm run dev          # daemon (tsx watch, :3400) + Vite UI (:3401, proxies /api)
+npm run dev          # daemon (tsx watch, :3400) + Vite UI (:3401, proxies /api)  — for coding
+npm run play         # build, then the daemon serving dist/ui on :3400            — for playing
 npm run check        # typecheck && lint && test && build   ← run before every commit
-npm start            # built daemon serving dist/ui on :3400
+npm start            # built daemon serving dist/ui on :3400 (no build step)
 npm run mcp          # built MCP server on stdio (needs a running daemon)
 claude mcp add mineserver -- node E:/Coding/mineserver/dist/mcp/main.js
 ```
