@@ -6,9 +6,14 @@ a browser UI for you, and an MCP server so an AI assistant can operate and debug
 Made for the household case: two people on the LAN, a friend joining from across the country through a
 free [playit.gg](https://playit.gg) tunnel, mods swapped constantly, several worlds, no hosting bill.
 
-- **Profiles**: world + enabled mods + `server.properties` overrides + memory. Switch in one click.
-- **Mod library**: every jar stored once; profiles pick from it. Server-side vs client-side detected from
-  `fabric.mod.json`.
+- **Profiles**: runtime (Fabric or Forge, any Minecraft version) + world + enabled mods +
+  `server.properties` overrides + memory. Switching from Fabric 26.2 to Forge 1.20.1 is activating
+  a different profile; each runtime keeps its own server folder and the right JDK is picked for it.
+- **Modpack import**: paste a Modrinth modpack link. The pack's runtime is installed, its server-side
+  jars land in the library, its configs are applied, and a profile is created.
+- **Mod library**: every jar stored once, any loader; profiles pick from it. Loader and side are read
+  from `fabric.mod.json` / `mods.toml`, and jars for the wrong loader are skipped automatically.
+- **Whitelist**: type usernames once; UUIDs are resolved and written to every runtime's whitelist.
 - **Worlds**: kept apart from your single-player saves; import a save with one click (it copies).
 - **Export**: a zip of exactly the mods a friend needs, with a README and the server address.
 - **Sync my client**: push the same mod set into your own `.minecraft/mods`.
@@ -21,7 +26,8 @@ free [playit.gg](https://playit.gg) tunnel, mods swapped constantly, several wor
 
 - Windows 10/11 (junctions and hardlinks are used; Linux/macOS should work but are untested)
 - Node 22+
-- Java 25+ (Minecraft 26.x requires it). The daemon finds `C:\Program Files\Java\jdk-25*` itself.
+- A JDK matching each runtime you use: 25 for Minecraft 26.x, 21 for 1.21.x, 17 for 1.20.1. The
+  daemon finds them under `C:\Program Files\Java\jdk-*` itself and tells you which one is missing.
 - Minecraft Java Edition accounts for everyone who joins (the whitelist is always on)
 
 ## Setup
@@ -50,6 +56,18 @@ it fetches the vanilla server on first start), then **Start**. The first start t
 **Mods** tab → *Import from .minecraft/mods* pulls your client's jars into the library. **Profiles** tab →
 create a profile, tick the mods, activate it. **Worlds** tab → import a single-player save if you want to
 keep playing an existing world.
+
+### Step 3b: A whole modpack instead
+
+**Mods** tab → *Import a modpack* → paste e.g. `https://modrinth.com/modpack/society-sunlit-valley`.
+A few minutes later there is a new profile on the pack's own runtime (Forge 1.20.1 for that one).
+Activate it and Start. Friends install the same pack in their launcher; the export zip includes
+the `.mrpack` plus any jars you added on top.
+
+Two things packs do that mineserver can't fix for you: some mark client-only mods as required on
+the server (the Profiles tab lets you untick the server box and keep the client box), and a
+Modrinth pack can be missing CurseForge-only mods its own data still references
+(`tools/cf-sync.mjs` pulls those from the CurseForge edition).
 
 ### Step 4: Let a friend in
 
