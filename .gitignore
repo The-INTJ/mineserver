@@ -1,0 +1,14 @@
+# Build + deps
+node_modules/
+dist/
+
+# Everything mutable lives here: server jar (EULA forbids redistribution),
+# mod jars (mixed licenses), worlds, logs, whitelist/ops (usernames + UUIDs),
+# server.properties, playit secret. Never commit any of it.
+data/
+
+# Local
+.env
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,21 @@
+# mineserver baseline. Profile overrides are merged on top of this at launch.
+# `level-name` and `white-list` are forced by mineserver regardless of overrides:
+# the active world is always exposed at data/server/world via a junction, and
+# the public tunnel address makes an un-whitelisted server open to anyone.
+level-name=world
+white-list=true
+enforce-whitelist=true
+online-mode=true
+server-port=25565
+motd=mineserver
+max-players=10
+view-distance=10
+simulation-distance=10
+difficulty=normal
+gamemode=survival
+pvp=true
+spawn-protection=0
+enable-command-block=true
+sync-chunk-writes=false
+enable-rcon=false
+enable-query=false
