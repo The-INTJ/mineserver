@@ -1,17 +1,17 @@
 import { EventEmitter } from "node:events";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { Profile, ServerState } from "../../shared/types.ts";
+import type { Profile, Runtime, ServerState } from "../../shared/types.ts";
 import { READY_TIMEOUT_MS, STOP_TIMEOUT_MS } from "../../shared/constants.ts";
 import type { Paths } from "../config.ts";
 import { conflict } from "../errors.ts";
 import { eulaAccepted } from "../fabric/eula.ts";
-import { launcherJarPath, launcherPresent } from "../fabric/fabric-launcher.ts";
-import { probeJava } from "../fabric/java-info.ts";
 import type { ModLibrary } from "../mods/mod-library.ts";
 import { applyModPlan, planMods } from "../profiles/materialize.ts";
 import type { ProfileStore } from "../profiles/profile-store.ts";
 import { buildServerProperties } from "../profiles/server-properties.ts";
+import type { RuntimeStore } from "../runtime/runtime-store.ts";
+import { loaderCompatible, runtimeId } from "../runtime/runtimes.ts";
 import type { StateStore } from "../state-store.ts";
 import type { WorldStore } from "../worlds/world-store.ts";
 import { JavaProcess } from "./java-process.ts";
@@ -25,7 +25,7 @@ export interface ServerManagerDeps {
   profiles: ProfileStore;
   library: ModLibrary;
   worlds: WorldStore;
-  javaPath: string;
+  runtimes: RuntimeStore;
   /** Test seam: override the spawned command entirely (e.g. `node fake-java.mjs`). */
   spawnOverride?: { javaPath: string; args: string[] };
 }
@@ -53,6 +53,8 @@ export class ServerManager extends EventEmitter {
     lastExitCode: null,
     lastStopReason: null,
   };
+  /** Runtime of the profile that was last launched (for logs/snapshot while running). */
+  activeRuntime: Runtime | null = null;
   /** For the debug snapshot. */
   lastJvmArgs: string[] = [];
   lastEffectiveProperties: Record<string, string> | null = null;
@@ -76,32 +78,56 @@ export class ServerManager extends EventEmitter {
   async init(): Promise<void> {
     const persisted = await this.deps.state.get();
     this.state.activeProfileId = persisted.activeProfileId;
+    if (persisted.activeProfileId) {
+      const p = await this.deps.profiles.get(persisted.activeProfileId).catch(() => null);
+      this.activeRuntime = p?.runtime ?? null;
+    }
   }
 
   async start(profileId?: string): Promise<ServerState> {
     if (this.isActive) throw conflict("SERVER_RUNNING", `Server is ${this.state.status}`);
-    const { paths, logs, state, profiles, library, worlds } = this.deps;
+    const { logs, state, profiles, library, worlds, runtimes } = this.deps;
 
     const persisted = await state.get();
     const id = profileId ?? persisted.activeProfileId ?? (await profiles.ensureDefault()).id;
     const profile = await profiles.get(id);
+    const rt = profile.runtime;
+    const rp = runtimes.paths(rt);
+    this.activeRuntime = rt;
 
-    await this.preflight();
+    // 0. Preflight: runtime installed, EULA, Java.
+    if (!this.deps.spawnOverride) {
+      if (!(await runtimes.installed(rt))) {
+        throw conflict("RUNTIME_MISSING", `Runtime ${runtimeId(rt)} is not installed yet`);
+      }
+      await runtimes.ensureEula(rt, persisted.eulaAccepted);
+      if (!(await eulaAccepted(rp.dir))) {
+        throw conflict("EULA_REQUIRED", "Accept the Minecraft EULA before starting");
+      }
+    }
+    const spawnSpec = this.deps.spawnOverride ?? (await runtimes.launchSpec(rt, profile.jvm));
 
     // 1. World junction.
-    await worlds.link(profile.world);
-    logs.note(`profile "${profile.name}" (${profile.id}); world "${profile.world}"`);
-
-    // 2. Mods: rebuild data/server/mods from the library.
-    const libraryFiles = new Set((await library.list()).map((m) => m.file));
-    const existing = await fs.readdir(paths.serverMods).catch(() => [] as string[]);
-    const plan = planMods(
-      profile.enabledMods,
-      libraryFiles,
-      paths.modLibrary,
-      paths.serverMods,
-      existing,
+    await worlds.link(profile.world, rp.worldLink);
+    logs.note(
+      `profile "${profile.name}" (${profile.id}); runtime ${runtimeId(rt)}; world "${profile.world}"`,
     );
+
+    // 2. Mods: rebuild <runtime>/mods from the library, skipping jars built for another loader.
+    const lib = await library.list();
+    const libraryFiles = new Set(lib.map((m) => m.file));
+    const byFile = new Map(lib.map((m) => [m.file, m]));
+    const enabled = profile.enabledMods.filter((f) => {
+      const m = byFile.get(f);
+      if (m && !loaderCompatible(m.loaders, rt)) {
+        logs.note(`skipping ${f}: built for ${m.loaders.join("+")}, runtime is ${rt.loader}`);
+        return false;
+      }
+      return true;
+    });
+    await fs.mkdir(rp.mods, { recursive: true });
+    const existing = await fs.readdir(rp.mods).catch(() => [] as string[]);
+    const plan = planMods(enabled, libraryFiles, this.deps.paths.modLibrary, rp.mods, existing);
     const applied = await applyModPlan(plan);
     logs.note(
       `mods: ${plan.link.length} enabled (${applied.linked} linked, ${applied.copied} copied)`,
@@ -110,21 +136,19 @@ export class ServerManager extends EventEmitter {
 
     // 3. server.properties from template + profile overrides + forced keys.
     const template = await fs.readFile(
-      path.join(paths.templates, "server.properties.default"),
+      path.join(this.deps.paths.templates, "server.properties.default"),
       "utf8",
     );
     const built = buildServerProperties(template, profile.properties);
-    await fs.writeFile(path.join(paths.server, "server.properties"), built.text, "utf8");
+    await fs.writeFile(rp.properties, built.text, "utf8");
     this.lastEffectiveProperties = built.effective;
 
     // 4. Log file for this launch.
-    await pruneLogFiles(paths.logs, "server", KEEP_LOG_FILES - 1);
-    this.logFile = new LogFile(paths.logs, "server");
+    await pruneLogFiles(this.deps.paths.logs, "server", KEEP_LOG_FILES - 1);
+    this.logFile = new LogFile(this.deps.paths.logs, "server");
     await this.logFile.open();
 
     // 5. Spawn.
-    const args = this.jvmArgs(profile);
-    const spawnSpec = this.deps.spawnOverride ?? { javaPath: this.deps.javaPath, args };
     this.lastJvmArgs = spawnSpec.args;
     const proc = new JavaProcess();
     this.proc = proc;
@@ -146,8 +170,8 @@ export class ServerManager extends EventEmitter {
     });
     proc.on("exit", (code: number | null) => this.finish(code, null));
 
-    logs.note(`launching: ${spawnSpec.javaPath} ${spawnSpec.args.join(" ")}`);
-    proc.start({ javaPath: spawnSpec.javaPath, args: spawnSpec.args, cwd: paths.server });
+    logs.note(`launching in ${rp.dir}: ${spawnSpec.javaPath} ${spawnSpec.args.join(" ")}`);
+    proc.start({ javaPath: spawnSpec.javaPath, args: spawnSpec.args, cwd: rp.dir });
     this.setState({ pid: proc.pid });
 
     this.readyTimer = setTimeout(() => {
@@ -205,41 +229,14 @@ export class ServerManager extends EventEmitter {
     this.proc?.killSync();
   }
 
+  /** Called by the profiles route after `activate` so snapshot/logs follow the new runtime. */
+  setActiveProfile(profile: Profile | null): void {
+    this.state = { ...this.state, activeProfileId: profile?.id ?? null };
+    this.activeRuntime = profile?.runtime ?? null;
+    this.emit("state", this.getState());
+  }
+
   // ---- internals -------------------------------------------------------------------------
-
-  private async preflight(): Promise<void> {
-    const { paths, javaPath } = this.deps;
-    if (this.deps.spawnOverride) return;
-    if (!(await eulaAccepted(paths.server))) {
-      throw conflict("EULA_REQUIRED", "Accept the Minecraft EULA before starting");
-    }
-    if (!(await launcherPresent(paths.server))) {
-      throw conflict("LAUNCHER_MISSING", "Fabric server launcher not downloaded yet");
-    }
-    const java = await probeJava(javaPath);
-    if (!java.ok) {
-      throw conflict(
-        "JAVA_UNSUPPORTED",
-        `Java at ${javaPath} is ${java.version ?? "missing"}; need 25+`,
-      );
-    }
-  }
-
-  private jvmArgs(profile: Profile): string[] {
-    const gb = Math.max(1, Math.round(profile.jvm.maxMemoryGb));
-    return [
-      `-Xms${Math.min(gb, 2)}G`,
-      `-Xmx${gb}G`,
-      // Player names and chat can be non-ASCII; without these Windows Java writes cp1252.
-      "-Dfile.encoding=UTF-8",
-      "-Dstdout.encoding=UTF-8",
-      ...profile.jvm.extraArgs,
-      "-jar",
-      launcherJarPath(this.deps.paths.server),
-      // Without nogui the server opens a Swing window and stops writing to stdout.
-      "nogui",
-    ];
-  }
 
   private onLine(stream: "stdout" | "stderr", text: string): void {
     const line = this.deps.logs.push(stream, text);

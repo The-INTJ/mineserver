@@ -6,3 +6,7 @@ export function EnvBadge({ env }: { env: "client" | "server" | "*" }) {
   const label = env === "*" ? "both" : env;
   return <span className={`badge env-${env === "*" ? "both" : env}`}>{label}</span>;
 }
+
+export function LoaderBadge({ loader }: { loader: string }) {
+  return <span className={`badge loader-${loader}`}>{loader}</span>;
+}

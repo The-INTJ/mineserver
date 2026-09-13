@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ApiError, LogLine, ServerState, StatusResponse } from "../shared/types.ts";
+import type { ApiError, Job, LogLine, ServerState, StatusResponse } from "../shared/types.ts";
 
 export class RequestError extends Error {
   constructor(
@@ -37,12 +37,33 @@ export const api = {
       body: JSON.stringify(body),
     }).then((r) => handle<T>(r)),
   del: <T>(path: string) => fetch(`/api${path}`, { method: "DELETE" }).then((r) => handle<T>(r)),
-  upload: <T>(path: string, files: FileList | File[]) => {
+  upload: <T>(
+    path: string,
+    files: FileList | File[],
+    field = "files",
+    extra: Record<string, string> = {},
+  ) => {
     const fd = new FormData();
-    for (const f of Array.from(files)) fd.append("files", f);
+    for (const f of Array.from(files)) fd.append(field, f);
+    for (const [k, v] of Object.entries(extra)) fd.append(k, v);
     return fetch(`/api${path}`, { method: "POST", body: fd }).then((r) => handle<T>(r));
   },
 };
+
+/** Poll a job until it finishes; resolves with the final job, rejects on error. */
+export async function pollJob(
+  id: string,
+  onUpdate?: (job: Job) => void,
+  intervalMs = 1500,
+): Promise<Job> {
+  for (;;) {
+    const job = await api.get<Job>(`/jobs/${encodeURIComponent(id)}`);
+    onUpdate?.(job);
+    if (job.status === "done") return job;
+    if (job.status === "error") throw new Error(job.error ?? "job failed");
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
 
 /** Polls /api/status; the SSE `state` event triggers an immediate refresh so buttons react instantly. */
 export function useStatus(intervalMs = 4000) {

@@ -5,14 +5,16 @@ import { badRequest, conflict, notFound } from "../errors.ts";
 import { assertSafeSegment, dirSize, exists, slugify } from "../fsx.ts";
 
 /**
- * Worlds live in data/worlds/<name>. The server only ever sees data/server/world, which is a
+ * Worlds live in data/worlds/<name>. A server only ever sees <runtime dir>/world, which is a
  * directory junction to the active one. Junctions (unlike symlinks) need no Developer Mode or
  * admin on Windows, and the alternative of a `../` level-name is undocumented.
+ *
+ * A world is tied to the Minecraft version that created it: 26.2 worlds cannot be opened by a
+ * 1.20.1 server. `link()` doesn't check that; the profile's runtime + world pairing is the user's.
  */
 export class WorldStore {
   constructor(
     private readonly worldsDir: string,
-    private readonly serverWorldLink: string,
     private readonly minecraftSaves: string,
   ) {}
 
@@ -82,44 +84,47 @@ export class WorldStore {
     };
   }
 
-  async remove(name: string): Promise<void> {
+  async remove(name: string, linkedFrom: string[]): Promise<void> {
     const p = this.worldPath(name);
     if (!(await exists(p))) throw notFound("WORLD_NOT_FOUND", `No world ${name}`);
-    if ((await this.activeWorld()) === name) {
-      throw conflict("WORLD_ACTIVE", `World ${name} is linked as the active world`);
+    for (const link of linkedFrom) {
+      if ((await this.activeWorld(link)) === name) {
+        throw conflict("WORLD_ACTIVE", `World ${name} is linked from ${link}`);
+      }
     }
     await fs.rm(p, { recursive: true, force: true });
   }
 
-  /** Which world does data/server/world currently point at? */
-  async activeWorld(): Promise<string | null> {
+  /** Which world does a runtime's `world` junction currently point at? */
+  async activeWorld(link: string): Promise<string | null> {
     try {
-      const st = await fs.lstat(this.serverWorldLink);
+      const st = await fs.lstat(link);
       if (!st.isSymbolicLink()) return null;
-      const target = await fs.readlink(this.serverWorldLink);
+      const target = await fs.readlink(link);
       return path.basename(target.replace(/[\\/]+$/, ""));
     } catch {
       return null;
     }
   }
 
-  /** Point data/server/world at data/worlds/<name>, replacing any previous junction. */
-  async link(name: string): Promise<void> {
+  /** Point <runtime>/world at data/worlds/<name>, replacing any previous junction. */
+  async link(name: string, link: string): Promise<void> {
     const target = await this.ensure(name);
-    const st = await fs.lstat(this.serverWorldLink).catch(() => null);
+    await fs.mkdir(path.dirname(link), { recursive: true });
+    const st = await fs.lstat(link).catch(() => null);
     if (st) {
       if (st.isSymbolicLink()) {
-        await fs.rm(this.serverWorldLink, { recursive: false, force: true });
+        await fs.rm(link, { recursive: false, force: true });
       } else {
-        // A real directory here means something wrote a world straight into data/server.
+        // A real directory here means something wrote a world straight into the runtime dir.
         // Refuse rather than delete: it may be the only copy.
         throw badRequest(
           "WORLD_LINK_BLOCKED",
-          `${this.serverWorldLink} is a real directory, not a junction. Move it into data/worlds first.`,
+          `${link} is a real directory, not a junction. Move it into data/worlds first.`,
         );
       }
     }
     // "junction" is ignored on non-Windows and becomes a normal directory symlink.
-    await fs.symlink(target, this.serverWorldLink, "junction");
+    await fs.symlink(target, link, "junction");
   }
 }

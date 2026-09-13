@@ -13,15 +13,12 @@ export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 export interface Paths {
   root: string;
   data: string;
-  server: string;
-  serverMods: string;
-  /** Junction target for the active world; server.properties always says level-name=world. */
-  serverWorldLink: string;
-  serverLogs: string;
-  serverCrashReports: string;
+  /** One server working dir per runtime lives under here: data/servers/<loader>-<mc>/ */
+  servers: string;
   worlds: string;
   modLibrary: string;
   modLibraryIndex: string;
+  modpacks: string;
   profiles: string;
   logs: string;
   playit: string;
@@ -34,9 +31,33 @@ export interface Paths {
   clientSyncManifest: string;
 }
 
+/** Everything inside one runtime's server working dir. */
+export interface RuntimePaths {
+  dir: string;
+  mods: string;
+  /** Junction to data/worlds/<active>; server.properties always says level-name=world. */
+  worldLink: string;
+  logs: string;
+  crashReports: string;
+  eula: string;
+  properties: string;
+}
+
+export function runtimePaths(serversRoot: string, runtimeId: string): RuntimePaths {
+  const dir = path.join(serversRoot, runtimeId);
+  return {
+    dir,
+    mods: path.join(dir, "mods"),
+    worldLink: path.join(dir, "world"),
+    logs: path.join(dir, "logs"),
+    crashReports: path.join(dir, "crash-reports"),
+    eula: path.join(dir, "eula.txt"),
+    properties: path.join(dir, "server.properties"),
+  };
+}
+
 export function resolvePaths(dataDir?: string): Paths {
   const data = path.resolve(dataDir ?? process.env.MINESERVER_DATA ?? path.join(repoRoot, "data"));
-  const server = path.join(data, "server");
   const minecraftDir =
     process.env.MINESERVER_MINECRAFT_DIR ??
     (process.platform === "win32"
@@ -50,14 +71,11 @@ export function resolvePaths(dataDir?: string): Paths {
   return {
     root: repoRoot,
     data,
-    server,
-    serverMods: path.join(server, "mods"),
-    serverWorldLink: path.join(server, "world"),
-    serverLogs: path.join(server, "logs"),
-    serverCrashReports: path.join(server, "crash-reports"),
+    servers: path.join(data, "servers"),
     worlds: path.join(data, "worlds"),
     modLibrary: path.join(data, "mods", "library"),
     modLibraryIndex: path.join(data, "mods", "library.json"),
+    modpacks: path.join(data, "modpacks"),
     profiles: path.join(data, "profiles"),
     logs: path.join(data, "logs"),
     playit: path.join(data, "playit"),
@@ -74,39 +92,76 @@ export function resolvePaths(dataDir?: string): Paths {
 export async function ensureDirs(p: Paths): Promise<void> {
   const dirs = [
     p.data,
-    p.server,
-    p.serverMods,
+    p.servers,
     p.worlds,
     p.modLibrary,
+    p.modpacks,
     p.profiles,
     p.logs,
     p.playit,
     p.exports,
   ];
   for (const dir of dirs) await fs.mkdir(dir, { recursive: true });
+  // v0.1 kept a single server at data/server; it was always Fabric 26.2.
+  const legacy = path.join(p.data, "server");
+  const target = path.join(p.servers, "fabric-26.2");
+  if ((await exists(legacy)) && !(await exists(target))) await fs.rename(legacy, target);
+}
+
+export interface JavaCandidate {
+  major: number;
+  exe: string;
 }
 
 /**
- * Find a Java 25+ binary. JAVA_HOME is deliberately ignored: on the dev machine it points at
- * JDK 17 while PATH resolves to 25. Order: MINESERVER_JAVA env, then the newest
- * "C:\Program Files\Java\jdk-*", then bare "java" on PATH.
+ * Enumerate installed JDKs. JAVA_HOME is deliberately ignored: on the dev machine it points at
+ * JDK 17 while PATH resolves to 25. Order: MINESERVER_JAVA_<major> env, then "C:\Program Files\Java\jdk-*"
+ * and Adoptium, then bare "java" on PATH as a last resort with unknown major.
  */
-export async function findJava(): Promise<string> {
-  if (process.env.MINESERVER_JAVA) return process.env.MINESERVER_JAVA;
+export async function listJavas(): Promise<JavaCandidate[]> {
+  const out: JavaCandidate[] = [];
+  for (const [k, v] of Object.entries(process.env)) {
+    const m = /^MINESERVER_JAVA_(\d+)$/.exec(k);
+    if (m && v) out.push({ major: Number(m[1]), exe: v });
+  }
   if (process.platform === "win32") {
-    const roots = ["C:\\Program Files\\Java", "C:\\Program Files\\Eclipse Adoptium"];
-    const candidates: { major: number; exe: string }[] = [];
+    const roots = [
+      "C:\\Program Files\\Java",
+      "C:\\Program Files\\Eclipse Adoptium",
+      "C:\\Program Files\\Microsoft",
+    ];
     for (const root of roots) {
       const entries = await fs.readdir(root).catch(() => [] as string[]);
       for (const name of entries) {
         const m = /^jdk-?(\d+)/.exec(name);
         if (!m) continue;
         const exe = path.join(root, name, "bin", "java.exe");
-        if (await exists(exe)) candidates.push({ major: Number(m[1]), exe });
+        if (await exists(exe)) out.push({ major: Number(m[1]), exe });
       }
     }
-    candidates.sort((a, b) => b.major - a.major);
-    if (candidates.length > 0) return candidates[0].exe;
+  } else {
+    for (const root of ["/usr/lib/jvm", "/Library/Java/JavaVirtualMachines"]) {
+      const entries = await fs.readdir(root).catch(() => [] as string[]);
+      for (const name of entries) {
+        const m = /(\d+)/.exec(name);
+        if (!m) continue;
+        for (const rel of ["bin/java", "Contents/Home/bin/java"]) {
+          const exe = path.join(root, name, rel);
+          if (await exists(exe)) out.push({ major: Number(m[1]), exe });
+        }
+      }
+    }
   }
-  return "java";
+  return out.sort((a, b) => b.major - a.major);
+}
+
+/**
+ * Pick a JDK for a required major. Exact match first; otherwise the closest *newer* one. The
+ * caller decides whether "newer" is acceptable (it is for Fabric on 26.x; Forge 1.20.1 on 25 breaks).
+ */
+export function pickJava(candidates: JavaCandidate[], major: number): JavaCandidate | null {
+  const exact = candidates.find((c) => c.major === major);
+  if (exact) return exact;
+  const newer = candidates.filter((c) => c.major > major).sort((a, b) => a.major - b.major);
+  return newer[0] ?? null;
 }

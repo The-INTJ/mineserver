@@ -35,7 +35,9 @@ export function profileRoutes(ctx: AppContext) {
     if (patch.jvm && (!Number.isFinite(patch.jvm.maxMemoryGb) || patch.jvm.maxMemoryGb < 1)) {
       throw badRequest("BAD_JVM", "jvm.maxMemoryGb must be >= 1");
     }
-    return c.json(await ctx.profiles.update(id, patch));
+    const updated = await ctx.profiles.update(id, patch);
+    if (ctx.server.getState().activeProfileId === id) ctx.server.setActiveProfile(updated);
+    return c.json(updated);
   });
 
   app.delete("/profiles/:id", async (c) => {
@@ -44,8 +46,10 @@ export function profileRoutes(ctx: AppContext) {
     if (id === "default")
       throw badRequest("PROFILE_PROTECTED", "The default profile cannot be deleted");
     await ctx.profiles.remove(id);
-    if (ctx.server.getState().activeProfileId === id)
+    if (ctx.server.getState().activeProfileId === id) {
       await ctx.state.patch({ activeProfileId: null });
+      ctx.server.setActiveProfile(null);
+    }
     return c.json({ ok: true });
   });
 
@@ -54,17 +58,22 @@ export function profileRoutes(ctx: AppContext) {
     const id = c.req.param("id");
     if (ctx.server.isActive)
       throw conflict("SERVER_RUNNING", "Stop the server before switching profiles");
-    await ctx.profiles.get(id);
+    const profile = await ctx.profiles.get(id);
     await ctx.state.patch({ activeProfileId: id });
-    await ctx.server.init();
+    ctx.server.setActiveProfile(profile);
     return c.json({ ok: true, activeProfileId: id });
   });
 
+  /** Toggle a library jar in this profile. side=server (loaded by the server) or client (export-only). */
   app.post("/profiles/:id/mods", async (c) => {
     const id = c.req.param("id");
-    const { file, enabled } = await c.req.json<{ file?: string; enabled?: boolean }>();
+    const { file, enabled, side } = await c.req.json<{
+      file?: string;
+      enabled?: boolean;
+      side?: "server" | "client";
+    }>();
     if (!file || typeof enabled !== "boolean")
-      throw badRequest("BAD_TOGGLE", "Send {file, enabled}");
+      throw badRequest("BAD_TOGGLE", "Send {file, enabled, side?}");
     await ctx.library.get(file);
     // Toggling while running is allowed (it only affects the next launch); make that visible.
     if (ctx.server.isActive && ctx.server.getState().activeProfileId === id) {
@@ -72,7 +81,9 @@ export function profileRoutes(ctx: AppContext) {
         `mod ${file} ${enabled ? "enabled" : "disabled"} for ${id}; takes effect on next start`,
       );
     }
-    return c.json(await ctx.profiles.setModEnabled(id, file, enabled));
+    return c.json(
+      await ctx.profiles.setModEnabled(id, file, enabled, side === "client" ? "client" : "server"),
+    );
   });
 
   return app;

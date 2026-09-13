@@ -283,3 +283,15 @@ code {
   padding: 1px 5px;
   border-radius: 4px;
 }
+.badge.loader-fabric {
+  color: #d9b36a;
+}
+.badge.loader-forge {
+  color: #7fb2ff;
+}
+.badge.loader-neoforge {
+  color: #ff9a6a;
+}
+.badge.loader-unknown {
+  color: var(--muted);
+}

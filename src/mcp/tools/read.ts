@@ -10,7 +10,7 @@ export function registerReadTools(mcp: McpServer, api: DaemonClient): void {
     "status",
     {
       description:
-        "Server status: running state, active profile, players online, Java/EULA/launcher setup, LAN address, tunnel state and pinned versions. Call this first.",
+        "Server status: running state, active profile (with its runtime), players online, setup state for that runtime (installed? Java? EULA?), LAN address, tunnel state, and every known runtime. Call this first.",
     },
     async () => json(await api.get("/status")),
   );
@@ -38,16 +38,25 @@ export function registerReadTools(mcp: McpServer, api: DaemonClient): void {
     "list_profiles",
     {
       description:
-        "All profiles (world + enabled mods + property overrides + JVM memory) and which one is active.",
+        "All profiles (runtime + world + enabled mods + client-only mods + modpack + memory) and which one is active.",
     },
     async () => json(await api.get("/profiles")),
+  );
+
+  mcp.registerTool(
+    "list_runtimes",
+    {
+      description:
+        "Installed and referenced server runtimes (loader + Minecraft version) with install/Java status, plus the presets the UI offers.",
+    },
+    async () => json(await api.get("/runtimes")),
   );
 
   mcp.registerTool(
     "list_mods",
     {
       description:
-        "Mod library with parsed fabric.mod.json metadata (id, version, environment client|server|*) and whether each is enabled in a profile.",
+        "Mod library with parsed metadata (id, version, loader fabric|forge|neoforge, environment client|server|*) and, for a profile, whether each is enabled, client-only, and loader-compatible.",
       inputSchema: { profileId: z.string().optional().describe("Defaults to the active profile") },
     },
     async ({ profileId }) => json(await api.get("/mods", { profileId })),
@@ -61,7 +70,7 @@ export function registerReadTools(mcp: McpServer, api: DaemonClient): void {
 
   mcp.registerTool(
     "list_worlds",
-    { description: "Worlds under data/worlds and which one is linked as active." },
+    { description: "Worlds under data/worlds and which one the focused runtime links to." },
     async () => json(await api.get("/worlds")),
   );
 
@@ -75,10 +84,20 @@ export function registerReadTools(mcp: McpServer, api: DaemonClient): void {
   );
 
   mcp.registerTool(
+    "job_status",
+    {
+      description:
+        "Progress of a long-running job (modpack import, runtime install). Omit id to list recent jobs.",
+      inputSchema: { id: z.string().optional() },
+    },
+    async ({ id }) => json(await api.get(id ? `/jobs/${encodeURIComponent(id)}` : "/jobs")),
+  );
+
+  mcp.registerTool(
     "list_log_files",
     {
       description:
-        "Log files on disk: per-launch daemon logs, the game's own logs, and crash reports.",
+        "Log files on disk: per-launch daemon logs, the focused runtime's own logs, and its crash reports.",
     },
     async () => json(await api.get("/logs/files")),
   );
@@ -129,7 +148,7 @@ export function registerReadTools(mcp: McpServer, api: DaemonClient): void {
     "debug_snapshot",
     {
       description:
-        "Everything needed to diagnose a problem in one call: status, active profile, mods with environments, last 200 log lines, JVM args, effective server.properties, contents of the server mods dir, log file list, newest crash report.",
+        "Everything needed to diagnose a problem in one call: status, active profile, runtimes, mods with loader/environment, last 200 log lines, JVM args, effective server.properties, contents of the runtime's mods dir, log file list, newest crash report, recent jobs.",
     },
     async () => json(await api.get("/debug/snapshot")),
   );

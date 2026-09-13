@@ -1,8 +1,8 @@
 import { useState } from "react";
 import type { StatusResponse } from "../../shared/types.ts";
 import { api, errMsg, useLogStream } from "../api.ts";
-import { EulaGate } from "../components/EulaGate.tsx";
 import { LogView } from "../components/LogView.tsx";
+import { SetupGate, setupReady } from "../components/SetupGate.tsx";
 import { StatusBadge } from "../components/StatusBadge.tsx";
 
 export function Dashboard({ status, refresh }: { status: StatusResponse; refresh: () => void }) {
@@ -14,7 +14,8 @@ export function Dashboard({ status, refresh }: { status: StatusResponse; refresh
 
   const s = status.server;
   const active = s.status === "starting" || s.status === "running" || s.status === "stopping";
-  const ready = status.setup.javaOk && status.setup.eulaAccepted && status.setup.launcherJarPresent;
+  const ready = setupReady(status.setup);
+  const p = status.activeProfile;
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -38,7 +39,7 @@ export function Dashboard({ status, refresh }: { status: StatusResponse; refresh
 
   return (
     <>
-      <EulaGate setup={status.setup} onChange={refresh} />
+      <SetupGate setup={status.setup} onChange={refresh} />
       <div className="grid-2">
         <div className="card">
           <h2>
@@ -46,15 +47,20 @@ export function Dashboard({ status, refresh }: { status: StatusResponse; refresh
           </h2>
           <dl className="kv">
             <dt>Profile</dt>
+            <dd>{p ? `${p.name} (${p.id})` : "— pick one on the Profiles tab"}</dd>
+            <dt>Runtime</dt>
             <dd>
-              {status.activeProfile
-                ? `${status.activeProfile.name} (${status.activeProfile.id})`
-                : "—"}
+              {p
+                ? `${p.runtime.loader} ${p.runtime.minecraft} (${p.runtime.loaderVersion})`
+                : status.setup.runtime.id}
             </dd>
             <dt>World</dt>
-            <dd>{status.activeProfile?.world ?? "—"}</dd>
+            <dd>{p?.world ?? "—"}</dd>
             <dt>Mods</dt>
-            <dd>{status.activeProfile?.enabledMods.length ?? 0} enabled</dd>
+            <dd>
+              {p?.enabledMods.length ?? 0} enabled
+              {p?.modpack ? ` · modpack ${p.modpack.name} ${p.modpack.version}` : ""}
+            </dd>
             <dt>Players</dt>
             <dd>{s.players.length ? s.players.join(", ") : "none"}</dd>
             <dt>LAN address</dt>
@@ -107,8 +113,8 @@ export function Dashboard({ status, refresh }: { status: StatusResponse; refresh
             </button>
           </div>
           <p className="muted" style={{ marginBottom: 0 }}>
-            Java {status.setup.javaVersion ?? "?"} · Minecraft {status.versions.minecraft} · Fabric{" "}
-            {status.versions.loader} · data <span className="mono">{status.setup.dataDir}</span>
+            Java {status.setup.runtime.javaVersion ?? "?"} · data{" "}
+            <span className="mono">{status.setup.dataDir}</span>
           </p>
         </div>
         <div className="card">

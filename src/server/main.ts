@@ -21,7 +21,6 @@ async function main() {
   const server = serve({ fetch: app.fetch, hostname: host, port }, (info) => {
     console.log(`mineserver daemon listening on http://${info.address}:${info.port}`);
     console.log(`data dir: ${ctx.paths.data}`);
-    console.log(`java: ${ctx.javaPath}`);
   });
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {

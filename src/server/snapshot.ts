@@ -4,39 +4,62 @@ import type {
   DebugSnapshot,
   LogFileInfo,
   ModInLibraryWithState,
+  Profile,
+  Runtime,
+  RuntimeInfo,
   StatusResponse,
 } from "../shared/types.ts";
-import { LOADER_VERSION, MC_VERSION, MINECRAFT_PORT } from "../shared/constants.ts";
+import { MINECRAFT_PORT } from "../shared/constants.ts";
 import type { AppContext } from "./context.ts";
-import { eulaAccepted } from "./fabric/eula.ts";
-import { launcherPresent } from "./fabric/fabric-launcher.ts";
-import { probeJava } from "./fabric/java-info.ts";
 import { exists } from "./fsx.ts";
 import { lanIp } from "./lan.ts";
+import { loaderCompatible, parseRuntimeId } from "./runtime/runtimes.ts";
+
+/** The profile whose runtime the setup panel and log listings refer to. */
+export async function focusProfile(ctx: AppContext): Promise<Profile | null> {
+  const id = ctx.server.getState().activeProfileId;
+  if (id) return ctx.profiles.get(id).catch(() => null);
+  return ctx.profiles.get("default").catch(() => null);
+}
+
+/** Runtimes: every profile's, plus any leftover installed dir. */
+export async function listRuntimes(ctx: AppContext): Promise<RuntimeInfo[]> {
+  const seen = new Map<string, Runtime>();
+  for (const p of await ctx.profiles.list())
+    seen.set(`${p.runtime.loader}-${p.runtime.minecraft}`, p.runtime);
+  for (const id of await ctx.runtimes.listInstalledIds()) {
+    if (seen.has(id)) continue;
+    const parsed = parseRuntimeId(id);
+    if (parsed) seen.set(id, { ...parsed, loaderVersion: "?" });
+  }
+  const out: RuntimeInfo[] = [];
+  for (const rt of seen.values()) out.push(await ctx.runtimes.info(rt));
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}
 
 export async function buildStatus(ctx: AppContext): Promise<StatusResponse> {
   const server = ctx.server.getState();
-  const java = await probeJava(ctx.javaPath);
   const activeProfile = server.activeProfileId
     ? await ctx.profiles.get(server.activeProfileId).catch(() => null)
     : null;
+  const focus = activeProfile ?? (await focusProfile(ctx));
+  const runtime = await ctx.runtimes.info(
+    focus?.runtime ?? (await ctx.profiles.ensureDefault()).runtime,
+  );
+  const persisted = await ctx.state.get();
   return {
     server,
     activeProfile,
     setup: {
-      javaPath: ctx.javaPath,
-      javaVersion: java.version,
-      javaMajor: java.major,
-      javaOk: java.ok,
-      eulaAccepted: await eulaAccepted(ctx.paths.server),
-      launcherJarPresent: await launcherPresent(ctx.paths.server),
+      runtime,
+      eulaAccepted: persisted.eulaAccepted || runtime.eulaAccepted,
       dataDir: ctx.paths.data,
       minecraftDir: ctx.paths.minecraftDir,
       minecraftDirPresent: await exists(ctx.paths.minecraftDir),
     },
     lan: { ip: lanIp(), port: MINECRAFT_PORT },
     tunnel: await ctx.tunnel.getState(),
-    versions: { minecraft: MC_VERSION, loader: LOADER_VERSION },
+    runtimes: await listRuntimes(ctx),
   };
 }
 
@@ -56,17 +79,27 @@ export async function listLogFiles(ctx: AppContext): Promise<LogFileInfo[]> {
     }
   };
   await scan(ctx.paths.logs, "daemon", (n) => n.endsWith(".log"));
-  await scan(ctx.paths.serverLogs, "server", (n) => n.endsWith(".log") || n.endsWith(".log.gz"));
-  await scan(ctx.paths.serverCrashReports, "crash", (n) => n.endsWith(".txt"));
+  const rt = await focusRuntimePaths(ctx);
+  if (rt) {
+    await scan(rt.logs, "server", (n) => n.endsWith(".log") || n.endsWith(".log.gz"));
+    await scan(rt.crashReports, "crash", (n) => n.endsWith(".txt"));
+  }
   return out.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
 }
 
-export function logFileDir(ctx: AppContext, source: LogFileInfo["source"]): string {
-  return source === "daemon"
-    ? ctx.paths.logs
-    : source === "server"
-      ? ctx.paths.serverLogs
-      : ctx.paths.serverCrashReports;
+export async function focusRuntimePaths(ctx: AppContext) {
+  const rt = ctx.server.activeRuntime ?? (await focusProfile(ctx))?.runtime ?? null;
+  return rt ? ctx.runtimes.paths(rt) : null;
+}
+
+export async function logFileDir(
+  ctx: AppContext,
+  source: LogFileInfo["source"],
+): Promise<string | null> {
+  if (source === "daemon") return ctx.paths.logs;
+  const rt = await focusRuntimePaths(ctx);
+  if (!rt) return null;
+  return source === "server" ? rt.logs : rt.crashReports;
 }
 
 export async function modsWithState(
@@ -74,10 +107,15 @@ export async function modsWithState(
   profileId: string | null,
 ): Promise<ModInLibraryWithState[]> {
   const mods = await ctx.library.list();
-  const enabled = new Set(
-    profileId ? ((await ctx.profiles.get(profileId).catch(() => null))?.enabledMods ?? []) : [],
-  );
-  return mods.map((m) => ({ ...m, enabled: enabled.has(m.file) }));
+  const profile = profileId ? await ctx.profiles.get(profileId).catch(() => null) : null;
+  const enabled = new Set(profile?.enabledMods ?? []);
+  const client = new Set(profile?.clientMods ?? []);
+  return mods.map((m) => ({
+    ...m,
+    enabled: enabled.has(m.file),
+    clientOnly: client.has(m.file),
+    compatible: profile ? loaderCompatible(m.loaders, profile.runtime) : true,
+  }));
 }
 
 /** One blob with everything an AI (or a human) needs to diagnose "it won't start". */
@@ -86,10 +124,9 @@ export async function buildSnapshot(ctx: AppContext): Promise<DebugSnapshot> {
   const logFiles = await listLogFiles(ctx);
   const crash = logFiles.find((f) => f.source === "crash");
   let latestCrashReport: string | null = null;
-  if (crash) {
-    const text = await fs
-      .readFile(path.join(ctx.paths.serverCrashReports, crash.name), "utf8")
-      .catch(() => "");
+  const rt = await focusRuntimePaths(ctx);
+  if (crash && rt) {
+    const text = await fs.readFile(path.join(rt.crashReports, crash.name), "utf8").catch(() => "");
     latestCrashReport = text.slice(0, 20_000);
   }
   return {
@@ -102,6 +139,7 @@ export async function buildSnapshot(ctx: AppContext): Promise<DebugSnapshot> {
     logFiles,
     latestCrashReport,
     serverPropertiesEffective: ctx.server.lastEffectiveProperties,
-    serverModsDir: await fs.readdir(ctx.paths.serverMods).catch(() => [] as string[]),
+    serverModsDir: rt ? await fs.readdir(rt.mods).catch(() => [] as string[]) : [],
+    jobs: ctx.jobs.list(),
   };
 }

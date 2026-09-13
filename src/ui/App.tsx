@@ -43,7 +43,7 @@ export function App() {
         {!status && !error && <p className="muted">Connecting…</p>}
         {status && tab === "Dashboard" && <Dashboard status={status} refresh={refresh} />}
         {status && tab === "Profiles" && <Profiles status={status} refresh={refresh} />}
-        {status && tab === "Mods" && <Mods status={status} />}
+        {status && tab === "Mods" && <Mods status={status} refresh={refresh} />}
         {status && tab === "Worlds" && <Worlds status={status} />}
         {status && tab === "Tunnel" && <Tunnel refresh={refresh} />}
         {status && tab === "Export" && <Export status={status} />}

@@ -27,11 +27,14 @@ export function exportRoutes(ctx: AppContext) {
       profile,
       library: await ctx.library.list(),
       libraryDir: ctx.paths.modLibrary,
+      modpacksDir: ctx.paths.modpacks,
       exportsDir: ctx.paths.exports,
       templatesDir: ctx.paths.templates,
       serverAddress: tunnel.publicAddress,
     });
-    ctx.logs.note(`exported client zip ${r.file} (${r.includedMods.length} mods)`);
+    ctx.logs.note(
+      `exported client zip ${r.file} (${r.includedMods.length} loose mods${r.modpackIncluded ? ", + " + r.modpackIncluded : ""})`,
+    );
     return c.json(r);
   });
 
@@ -64,6 +67,12 @@ export function exportRoutes(ctx: AppContext) {
       .json<{ profileId?: string }>()
       .catch(() => ({}) as { profileId?: string });
     const profile = await ctx.profiles.get(resolveProfileId(body.profileId));
+    if (profile.modpack) {
+      throw badRequest(
+        "SYNC_MODPACK",
+        "This profile is a modpack: install it in your launcher from the export zip instead of syncing .minecraft/mods",
+      );
+    }
     const r = await syncClientMods({
       profile,
       library: await ctx.library.list(),

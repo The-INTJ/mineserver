@@ -62,8 +62,8 @@ export function logRoutes(ctx: AppContext) {
     if (source !== "daemon" && source !== "server" && source !== "crash")
       throw notFound("BAD_SOURCE", "unknown source");
     assertSafeSegment(name, "log file name");
-    const file = path.join(logFileDir(ctx, source), name);
-    const text = await fs.readFile(file, "utf8").catch(() => null);
+    const dir = await logFileDir(ctx, source);
+    const text = dir ? await fs.readFile(path.join(dir, name), "utf8").catch(() => null) : null;
     if (text === null) throw notFound("LOG_NOT_FOUND", `No ${source} log ${name}`);
     return c.text(text);
   });

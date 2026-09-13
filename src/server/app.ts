@@ -6,12 +6,15 @@ import type { AppContext } from "./context.ts";
 import { AppError } from "./errors.ts";
 import { debugRoutes } from "./routes/debug.ts";
 import { exportRoutes } from "./routes/export.ts";
+import { jobRoutes } from "./routes/jobs.ts";
 import { logRoutes } from "./routes/logs.ts";
+import { modpackRoutes } from "./routes/modpacks.ts";
 import { modRoutes } from "./routes/mods.ts";
 import { profileRoutes } from "./routes/profiles.ts";
 import { serverRoutes } from "./routes/server.ts";
 import { setupRoutes } from "./routes/setup.ts";
 import { tunnelRoutes } from "./routes/tunnel.ts";
+import { whitelistRoutes } from "./routes/whitelist.ts";
 import { worldRoutes } from "./routes/worlds.ts";
 
 const MIME: Record<string, string> = {
@@ -37,19 +40,21 @@ export function createApp(ctx: AppContext) {
   });
 
   const api = new Hono();
-  for (const r of [
+  const routes = [
     serverRoutes,
     logRoutes,
     setupRoutes,
     modRoutes,
+    modpackRoutes,
+    jobRoutes,
     profileRoutes,
     worldRoutes,
     exportRoutes,
     tunnelRoutes,
+    whitelistRoutes,
     debugRoutes,
-  ]) {
-    api.route("/", r(ctx));
-  }
+  ];
+  for (const r of routes) api.route("/", r(ctx));
   api.notFound((c) =>
     c.json({ error: "no such endpoint", code: "NOT_FOUND" } satisfies ApiError, 404),
   );

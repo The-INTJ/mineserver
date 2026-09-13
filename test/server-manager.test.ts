@@ -22,7 +22,6 @@ let ctx: AppContext;
 async function makeCtx(extraArgs: string[] = []) {
   ctx = await createContext({
     dataDir,
-    javaPath: process.execPath,
     spawnOverride: { javaPath: process.execPath, args: [FAKE, ...extraArgs] },
   });
   return ctx;
@@ -35,6 +34,8 @@ afterEach(async () => {
   await ctx?.server.stop();
   await fs.rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
 });
+
+const runtimeDir = () => path.join(dataDir, "servers", "fabric-26.2");
 
 describe("ServerManager with a fake java", () => {
   it("goes starting -> running on Done, tracks players, and stops cleanly", async () => {
@@ -56,11 +57,11 @@ describe("ServerManager with a fake java", () => {
     // A log file was written for the launch.
     const logs = await fs.readdir(path.join(dataDir, "logs"));
     expect(logs.some((n) => n.startsWith("server-"))).toBe(true);
-    // The world junction exists and server.properties was materialized with forced keys.
-    const props = await fs.readFile(path.join(dataDir, "server", "server.properties"), "utf8");
+    // The runtime dir got the world junction and a server.properties with forced keys.
+    const props = await fs.readFile(path.join(runtimeDir(), "server.properties"), "utf8");
     expect(props).toMatch(/^level-name=world$/m);
     expect(props).toMatch(/^white-list=true$/m);
-    const st = await fs.lstat(path.join(dataDir, "server", "world"));
+    const st = await fs.lstat(path.join(runtimeDir(), "world"));
     expect(st.isSymbolicLink()).toBe(true);
   });
 
@@ -85,15 +86,52 @@ describe("ServerManager with a fake java", () => {
     expect(activate.status).toBe(409);
   });
 
-  it("materializes enabled mods as hardlinks from the library", async () => {
+  it("materializes enabled mods as hardlinks and skips jars for another loader", async () => {
     await makeCtx();
     const lib = path.join(dataDir, "mods", "library");
     await fs.writeFile(path.join(lib, "a.jar"), "PK-fake");
-    await fs.writeFile(path.join(dataDir, "server", "mods", "stale.jar"), "old");
-    await ctx.profiles.update("default", { enabledMods: ["a.jar", "missing.jar"] });
+    await fs.writeFile(path.join(lib, "forge-only.jar"), "PK-fake");
+    // Pretend the index already knows forge-only.jar is a Forge jar (it isn't a real zip).
+    await ctx.library.refresh();
+    const indexFile = path.join(dataDir, "mods", "library.json");
+    const index = JSON.parse(await fs.readFile(indexFile, "utf8"));
+    index.mods["forge-only.jar"].loader = "forge";
+    index.mods["forge-only.jar"].loaders = ["forge"];
+    await fs.writeFile(indexFile, JSON.stringify(index));
+    await fs.mkdir(path.join(runtimeDir(), "mods"), { recursive: true });
+    await fs.writeFile(path.join(runtimeDir(), "mods", "stale.jar"), "old");
+    await ctx.profiles.update("default", {
+      enabledMods: ["a.jar", "forge-only.jar", "missing.jar"],
+    });
     await ctx.server.start();
-    const names = (await fs.readdir(path.join(dataDir, "server", "mods"))).sort();
+    const names = (await fs.readdir(path.join(runtimeDir(), "mods"))).sort();
     expect(names).toEqual(["a.jar"]);
-    expect(ctx.logs.tail(50).some((l) => l.text.includes("missing.jar"))).toBe(true);
+    const notes = ctx.logs.tail(50).map((l) => l.text);
+    expect(notes.some((t) => t.includes("missing.jar"))).toBe(true);
+    expect(notes.some((t) => t.includes("forge-only.jar") && t.includes("skipping"))).toBe(true);
+  });
+
+  it("upgrades v0.1 profiles and migrates data/server to data/servers/fabric-26.2", async () => {
+    await fs.mkdir(path.join(dataDir, "server", "mods"), { recursive: true });
+    await fs.writeFile(path.join(dataDir, "server", "eula.txt"), "eula=true\n");
+    await fs.mkdir(path.join(dataDir, "profiles"), { recursive: true });
+    await fs.writeFile(
+      path.join(dataDir, "profiles", "old.json"),
+      JSON.stringify({
+        id: "old",
+        name: "Old",
+        world: "w",
+        enabledMods: [],
+        properties: {},
+        jvm: { maxMemoryGb: 4, extraArgs: [] },
+        createdAt: "x",
+        updatedAt: "x",
+      }),
+    );
+    await makeCtx();
+    const p = await ctx.profiles.get("old");
+    expect(p.runtime).toEqual({ loader: "fabric", minecraft: "26.2", loaderVersion: "0.19.5" });
+    expect(p.clientMods).toEqual([]);
+    expect(await fs.readFile(path.join(runtimeDir(), "eula.txt"), "utf8")).toContain("eula=true");
   });
 });

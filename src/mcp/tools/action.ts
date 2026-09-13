@@ -3,6 +3,16 @@ import { z } from "zod";
 import type { DaemonClient } from "../client.ts";
 import { json } from "./util.ts";
 
+const runtimeSchema = z
+  .object({
+    loader: z.enum(["fabric", "forge", "neoforge"]),
+    minecraft: z.string().describe('e.g. "26.2" or "1.20.1"'),
+    loaderVersion: z.string().describe('e.g. "0.19.5" (Fabric) or "47.4.0" (Forge)'),
+  })
+  .describe(
+    "Which Minecraft + loader the profile runs. Each distinct loader+version gets its own server dir.",
+  );
+
 // ─────────────── Action tools: mutate the server. Each maps to one HTTP call. ───────────────
 
 export function registerActionTools(mcp: McpServer, api: DaemonClient): void {
@@ -10,7 +20,7 @@ export function registerActionTools(mcp: McpServer, api: DaemonClient): void {
     "start_server",
     {
       description:
-        "Start the Fabric server with a profile (default: the active one). Materializes mods and the world junction first. Fails with EULA_REQUIRED / LAUNCHER_MISSING / JAVA_UNSUPPORTED / SERVER_RUNNING.",
+        "Start the server with a profile (default: the active one). Materializes mods and the world junction first. Fails with RUNTIME_MISSING / EULA_REQUIRED / JAVA_UNSUPPORTED / SERVER_RUNNING.",
       inputSchema: { profileId: z.string().optional() },
     },
     async ({ profileId }) => json(await api.post("/server/start", { profileId })),
@@ -41,22 +51,26 @@ export function registerActionTools(mcp: McpServer, api: DaemonClient): void {
   mcp.registerTool(
     "set_mod_enabled",
     {
-      description: "Enable or disable a library jar in a profile. Takes effect on the next start.",
+      description:
+        "Enable or disable a library jar in a profile. side=server (loaded by the server, default) or client (export-only extra). Takes effect on the next start.",
       inputSchema: {
         profileId: z.string(),
         file: z.string().describe("Jar filename from list_mods"),
         enabled: z.boolean(),
+        side: z.enum(["server", "client"]).optional(),
       },
     },
-    async ({ profileId, file, enabled }) =>
-      json(await api.post(`/profiles/${encodeURIComponent(profileId)}/mods`, { file, enabled })),
+    async ({ profileId, file, enabled, side }) =>
+      json(
+        await api.post(`/profiles/${encodeURIComponent(profileId)}/mods`, { file, enabled, side }),
+      ),
   );
 
   mcp.registerTool(
     "switch_profile",
     {
       description:
-        "Make a profile the active one for the next start. Refused while the server is running.",
+        "Make a profile the active one for the next start (this is how you swap Fabric ↔ Forge). Refused while the server is running.",
       inputSchema: { profileId: z.string() },
     },
     async ({ profileId }) =>
@@ -67,25 +81,56 @@ export function registerActionTools(mcp: McpServer, api: DaemonClient): void {
     "create_profile",
     {
       description:
-        "Create a profile. `world` is a folder under data/worlds (created on first start if missing).",
+        "Create a profile. `world` is a folder under data/worlds (created on first start if missing). Omit runtime for Fabric 26.2.",
       inputSchema: {
         name: z.string().min(1),
+        runtime: runtimeSchema.optional(),
         world: z.string().optional(),
         enabledMods: z.array(z.string()).optional(),
         maxMemoryGb: z.number().int().min(1).optional(),
         properties: z.record(z.string(), z.string()).optional(),
       },
     },
-    async ({ name, world, enabledMods, maxMemoryGb, properties }) =>
+    async ({ name, runtime, world, enabledMods, maxMemoryGb, properties }) =>
       json(
         await api.post("/profiles", {
           name,
+          runtime,
           world,
           enabledMods,
           properties,
           jvm: maxMemoryGb ? { maxMemoryGb, extraArgs: [] } : undefined,
         }),
       ),
+  );
+
+  mcp.registerTool(
+    "install_runtime",
+    {
+      description:
+        "Download and install a server runtime (Fabric launcher, or Forge/NeoForge via their installer). Returns a job; poll job_status.",
+      inputSchema: { runtime: runtimeSchema },
+    },
+    async ({ runtime }) => json(await api.post("/runtimes/install", { runtime })),
+  );
+
+  mcp.registerTool(
+    "import_modpack",
+    {
+      description:
+        "Import a Modrinth modpack (URL, slug, or direct .mrpack URL): downloads the pack, installs its runtime if needed, pulls the server-side jars into the library, applies overrides, and creates a profile. Returns a job; poll job_status. Takes minutes for big packs.",
+      inputSchema: {
+        source: z
+          .string()
+          .describe(
+            "e.g. https://modrinth.com/modpack/society-sunlit-valley or society-sunlit-valley",
+          ),
+        profileName: z.string().optional(),
+        world: z.string().optional(),
+        maxMemoryGb: z.number().int().min(1).optional(),
+      },
+    },
+    async (args) => json(await api.post("/modpacks/import", args)),
   );
 
   mcp.registerTool(
@@ -103,10 +148,20 @@ export function registerActionTools(mcp: McpServer, api: DaemonClient): void {
     "export_client_zip",
     {
       description:
-        "Build the client mod pack zip for a profile (server-only mods excluded) under data/exports.",
+        "Build the client pack zip for a profile under data/exports: loose jars clients need, plus the .mrpack for modpack profiles, plus a README with the server address.",
       inputSchema: { profileId: z.string().optional() },
     },
     async ({ profileId }) => json(await api.post("/export/client-zip", { profileId })),
+  );
+
+  mcp.registerTool(
+    "whitelist_add",
+    {
+      description:
+        "Resolve Minecraft usernames via Mojang and add them to whitelist.json in EVERY runtime dir (Fabric and Forge alike); reloads the whitelist if a server is running. Reports names with no account.",
+      inputSchema: { names: z.array(z.string()).min(1) },
+    },
+    async ({ names }) => json(await api.post("/whitelist", { names })),
   );
 
   mcp.registerTool(
