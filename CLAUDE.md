@@ -17,7 +17,7 @@ LTS). Each `<loader>-<mc>` gets its own dir under `data/servers/` and its own JD
 ```
 src/shared/    types + constants. Runtime-neutral: no Node, no React. The contract for everything.
 src/server/    the daemon (Hono on 127.0.0.1:3400). Owns data/, the Java child, the playit child.
-  process/     JavaProcess (spawn/stdin/taskkill), LogBuffer (ring + SSE source), ServerManager (state machine)
+  process/     JavaProcess (IPC to independent Java guardian), LogBuffer (ring + SSE source), ServerManager (state machine)
   runtime/     runtimes.ts (pure: ids, URLs, Java majors, launch args), RuntimeStore (install, JDK pick, per-runtime dirs)
   profiles/    ProfileStore (JSON files), materialize (hardlink plan), server-properties (merge + forced keys)
   mods/        ModLibrary (data/mods/library + cached manifest metadata), mod-jar (fabric.mod.json / mods.toml), mrpack (Modrinth packs)
@@ -61,9 +61,9 @@ forced `level-name=world`, `white-list=true`) → open a log file → spawn Java
   `ModLibrary.add()` unlinks first. `planMods()` unlinks every jar and relinks, for the same reason.
 - **`nogui` is mandatory** or Java opens a Swing window and stops writing stdout.
 - **First launch is slow**: the Fabric launcher downloads the vanilla server jar. Ready timeout is 10 min
-  and only logs a warning; it never kills.
+  and requests a graceful stop on expiry, followed by the normal bounded escalation.
 - **Kill = `taskkill /T /F`** on Windows. `child.kill()` alone does not reliably end java.exe.
-  `main.ts` also kills on `exit`/SIGINT so a dead daemon never leaves an orphaned server.
+  Normal shutdown and manager IPC loss request a graceful save; the guardian enforces the timeout.
 - **EULA**: the server exits immediately without `eula=true`. Classified as `kind: "eula"`, surfaced by
   `EulaGate`, not shown as a crash.
 - **playit 1.0.x is a Windows service** (writes `C:\ProgramData\playit_gg`); we pin **0.17.1**, the last
@@ -92,20 +92,26 @@ forced `level-name=world`, `white-list=true`) → open a log file → spawn Java
   `curseforge.com/api/v1/mods/<p>/files/<f>/download` redirect. (Scratch script only so far; a
   proper "import CurseForge pack" job is the obvious next feature.)
 - **A Forge JVM that fails to boot usually doesn't exit.** Version-check and mod thread pools are
-  non-daemon. `ServerManager` kills it 15 s after "Failed to start the minecraft server" and, as a
-  fallback, after 120 s of no stdout while still `starting`.
-- **`npm run dev` hard-kills the game server on every source edit.** tsx watch restarts the daemon, and
-  the daemon's exit hook (deliberately) takes the Java child with it, without a graceful `stop`
-  (verified 2026-09-13: no orphan, but no "Saving chunks" either). While people are playing, run
-  `npm run play` (built, no watch) or `npm run daemon` (tsx, no watch) and don't edit code.
+  non-daemon. After 15 s of an explicit startup failure, the guardian requests graceful stop.
+  Startup silence produces warnings; the 10-minute overall readiness timeout also requests stop.
+- **Use production launchers during play.** `npm run play` builds and launches a detached manager;
+  `npm start` reuses the build. Both return after dashboard readiness; press Start for the saved
+  profile. `npm run dev` still restarts its manager on edits, causing the guardian to save and stop
+  Java. Use isolated data for development. See `docs/operations.md` for ownership and recovery.
+- **Missing enabled jars block startup.** Loading an existing world with a content mod missing can
+  damage it, so missing enabled files produce `MODS_MISSING` before Java opens the world.
+- **Diagnostics are bounded.** Save acknowledgements, per-launch incident records, manager logs,
+  independent guardian receipts, GC logs, and FTB mirror health are exposed in status/log endpoints.
+
 
 ## Development
 
 ```
 npm run dev          # daemon (tsx watch, :3400) + Vite UI (:3401, proxies /api)  — for coding
-npm run play         # build, then the daemon serving dist/ui on :3400            — for playing
+npm run play         # build, launch background manager, then press Start in UI
 npm run check        # typecheck && lint && test && build   ← run before every commit
-npm start            # built daemon serving dist/ui on :3400 (no build step)
+npm start            # launch existing build in background (no build step)
+npm run manager:stop # gracefully stop game and manager
 npm run mcp          # built MCP server on stdio (needs a running daemon)
 claude mcp add mineserver -- node E:/Coding/mineserver/dist/mcp/main.js
 ```

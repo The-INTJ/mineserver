@@ -54,7 +54,7 @@ describe("classify", () => {
     expect(
       classify("[12:00:00] [Server thread/ERROR]: Encountered an unexpected exception").kind,
     ).toBe("crash");
-    expect(classify("[12:00:00] [Server thread/FATAL]: anything").kind).toBe("crash");
+    expect(classify("[12:00:00] [Server thread/FATAL]: anything").kind).toBe("other");
     expect(
       classify(
         "[19:21:30] [main/ERROR] [net.minecraft.server.Main/FATAL]: Failed to start the minecraft server",

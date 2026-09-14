@@ -1,3 +1,4 @@
+import { BackupService } from "./backups/backup-service.ts";
 import { ensureDirs, resolvePaths, type Paths } from "./config.ts";
 import { JobRegistry } from "./jobs.ts";
 import { ModLibrary } from "./mods/mod-library.ts";
@@ -11,6 +12,8 @@ import { WorldStore } from "./worlds/world-store.ts";
 
 /** Every long-lived service, built once in main.ts and threaded into the routes. */
 export interface AppContext {
+  shutdown?: () => void;
+  backups: BackupService;
   paths: Paths;
   logs: LogBuffer;
   state: StateStore;
@@ -25,6 +28,8 @@ export interface AppContext {
 
 export interface ContextOptions {
   dataDir?: string;
+  stopTimeoutMs?: number;
+  recoveryDelayMs?: number;
   spawnOverride?: { javaPath: string; args: string[] };
 }
 
@@ -46,11 +51,15 @@ export async function createContext(opts: ContextOptions = {}): Promise<AppConte
     worlds,
     runtimes,
     spawnOverride: opts.spawnOverride,
+    stopTimeoutMs: opts.stopTimeoutMs,
+    recoveryDelayMs: opts.recoveryDelayMs,
   });
   const tunnel = new TunnelManager(paths.playit, logs);
   const jobs = new JobRegistry();
+  const backups = new BackupService(paths);
+  await backups.init();
   await profiles.ensureDefault();
   await server.init();
   await tunnel.init();
-  return { paths, logs, state, profiles, library, worlds, runtimes, server, tunnel, jobs };
+  return { backups, paths, logs, state, profiles, library, worlds, runtimes, server, tunnel, jobs };
 }

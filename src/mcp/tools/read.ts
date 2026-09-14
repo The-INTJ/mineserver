@@ -19,7 +19,7 @@ export function registerReadTools(mcp: McpServer, api: DaemonClient): void {
     "tail_logs",
     {
       description:
-        "Recent log lines from the daemon's ring buffer (server stdout/stderr, daemon notes, playit). Optional case-insensitive regex filter.",
+        "Recent log lines from the daemon's ring buffer (server stdout/stderr, daemon notes, playit). Optional case-insensitive literal filter; separate alternatives with |.",
       inputSchema: {
         lines: z
           .number()
@@ -28,7 +28,11 @@ export function registerReadTools(mcp: McpServer, api: DaemonClient): void {
           .max(2000)
           .optional()
           .describe("How many lines (default 200)"),
-        grep: z.string().optional().describe("Regex; only matching lines are returned"),
+        grep: z
+          .string()
+          .max(256)
+          .optional()
+          .describe("Literal text or alternatives separated by |"),
       },
     },
     async ({ lines, grep }) => json(await api.get("/logs", { lines, grep })),
@@ -105,20 +109,25 @@ export function registerReadTools(mcp: McpServer, api: DaemonClient): void {
   mcp.registerTool(
     "read_log_file",
     {
-      description: "Full text of one log file or crash report (see list_log_files for names).",
+      description:
+        "Bounded trailing text of a log file or crash report; decompresses .log.gz (see list_log_files for names).",
       inputSchema: {
         source: z.enum(["daemon", "server", "crash"]),
         name: z.string(),
         maxChars: z
           .number()
           .int()
+          .min(1000)
+          .max(2000000)
           .optional()
           .describe("Truncate to this many trailing characters (default 30000)"),
       },
     },
     async ({ source, name, maxChars }) => {
-      const text = await api.text(`/logs/files/${source}/${encodeURIComponent(name)}`);
       const limit = maxChars ?? 30_000;
+      const text = await api.text(
+        `/logs/files/${source}/${encodeURIComponent(name)}?maxChars=${limit}`,
+      );
       return {
         content: [
           {
@@ -132,16 +141,31 @@ export function registerReadTools(mcp: McpServer, api: DaemonClient): void {
 
   mcp.registerTool(
     "recent_crash_report",
-    { description: "Newest crash report text, or a note that there is none." },
-    async () => {
-      const { files } = (await api.get("/logs/files")) as {
-        files: { name: string; source: string }[];
-      };
-      const crash = files.find((f) => f.source === "crash");
-      if (!crash) return { content: [{ type: "text", text: "No crash reports." }] };
-      const text = await api.text(`/logs/files/crash/${encodeURIComponent(crash.name)}`);
-      return { content: [{ type: "text", text: `# ${crash.name}\n${text.slice(0, 30_000)}` }] };
+    {
+      description:
+        "Crash report matching the latest recorded launch, or a note that there is none. Use list_log_files for older incidents.",
     },
+    async () => {
+      const snapshot = (await api.get("/debug/snapshot")) as { latestCrashReport: string | null };
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              snapshot.latestCrashReport ?? "No crash report matching the latest recorded launch.",
+          },
+        ],
+      };
+    },
+  );
+
+  mcp.registerTool(
+    "incident_history",
+    {
+      description:
+        "Recent persisted server launches, stop causes, confirmed saves, forced exits and lag warnings. Survives manager restart.",
+    },
+    async () => json(await api.get("/server/incidents")),
   );
 
   mcp.registerTool(

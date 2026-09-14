@@ -3,6 +3,9 @@ import readline from "node:readline";
 import { isatty } from "node:tty";
 import { DAEMON_PORT } from "../shared/constants.ts";
 import { createApp } from "./app.ts";
+import { acquireInstanceLock } from "./process/instance-lock.ts";
+import { resolvePaths } from "./config.ts";
+import { LogFile, pruneLogFiles } from "./process/log-file.ts";
 import { createContext } from "./context.ts";
 
 function arg(name: string): string | undefined {
@@ -15,7 +18,32 @@ async function main() {
   // it is Drew's alone. Only the game port ever goes through the tunnel.
   const host = arg("host") ?? process.env.MINESERVER_HOST ?? "127.0.0.1";
   const port = Number(arg("port") ?? process.env.MINESERVER_PORT ?? DAEMON_PORT);
+  const paths = resolvePaths(arg("data"));
+  const lock = await acquireInstanceLock(paths.data);
   const ctx = await createContext({ dataDir: arg("data") });
+  await pruneLogFiles(paths.logs, "manager", 29).catch((err: unknown) => console.error(err));
+  await pruneLogFiles(paths.logs, "daemon-console", 29).catch((err: unknown) => console.error(err));
+  const managerLog = new LogFile(paths.logs, "manager");
+  await managerLog.open();
+  ctx.logs.on("line", (line) => {
+    if (line.stream === "daemon") managerLog.write(line);
+  });
+  ctx.logs.note(`manager started; pid=${process.pid}`);
+  ctx.backups.start();
+  let wasRunning = false;
+  ctx.server.on("state", (state) => {
+    const running = state.status === "running";
+    if (running && !wasRunning) {
+      void ctx.tunnel
+        .getState()
+        .then((tunnel) => {
+          if (tunnel.mode === "playit" && tunnel.secretPresent && tunnel.binaryPresent)
+            return ctx.tunnel.start();
+        })
+        .catch((err: unknown) => ctx.logs.note(`Tunnel start failed: ${String(err)}`));
+    }
+    wasRunning = running;
+  });
   const app = createApp(ctx);
 
   const server = serve({ fetch: app.fetch, hostname: host, port }, (info) => {
@@ -31,22 +59,39 @@ async function main() {
     process.exit(1);
   });
 
-  // Never orphan the Java child: if the daemon dies, the server goes with it (and the tunnel).
+  // Normal shutdown requests a save; abrupt manager death leaves the guardian time to save.
   let shuttingDown = false;
   const shutdown = async (why: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    ctx.logs.note(`${why}: manager shutdown; requesting Minecraft save and stop`);
     console.log(`\n${why}: stopping server...`);
     const t = setTimeout(() => {
       ctx.server.killSync();
       ctx.tunnel.killSync();
-      process.exit(0);
+      process.exit(1);
     }, 70_000);
-    await ctx.server.stop().catch(() => undefined);
+    await ctx.server.dispose().catch((err: unknown) => console.error("Shutdown:", err));
     await ctx.tunnel.stop().catch(() => undefined);
+    await ctx.backups.stop();
+    ctx.logs.note("manager shutdown complete");
+    await managerLog.close();
+    server.close();
+    lock.close();
     clearTimeout(t);
-    process.exit(0);
+    process.exit(why.startsWith("fatal") ? 1 : 0);
   };
+  ctx.shutdown = () => {
+    void shutdown("requested");
+  };
+  process.on("uncaughtException", (err) => {
+    ctx.logs.note(`fatal uncaught exception: ${err.stack ?? err.message}`);
+    void shutdown("fatal uncaught exception");
+  });
+  process.on("unhandledRejection", (err) => {
+    ctx.logs.note(`fatal unhandled rejection: ${String(err)}`);
+    void shutdown("fatal unhandled rejection");
+  });
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("exit", () => {

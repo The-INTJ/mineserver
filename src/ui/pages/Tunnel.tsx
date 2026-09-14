@@ -92,7 +92,9 @@ export function Tunnel({ refresh }: { refresh: () => void }) {
           <>
             <h2>External address</h2>
             <p className="muted">
-              Paste whatever your tunnel (playit, ngrok, port-forward) gives you.
+              Paste whatever your tunnel (playit, ngrok, port-forward) gives you. Keep that separate
+              app running. A saved address is configured; mineserver cannot verify that external
+              connection from here.
             </p>
             <div className="row">
               <input

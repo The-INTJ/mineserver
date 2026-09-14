@@ -49,6 +49,8 @@ export async function buildStatus(ctx: AppContext): Promise<StatusResponse> {
   const persisted = await ctx.state.get();
   return {
     server,
+    reliability: ctx.server.reliability(),
+    backups: ctx.backups.status(),
     activeProfile,
     setup: {
       runtime,
@@ -122,12 +124,27 @@ export async function modsWithState(
 export async function buildSnapshot(ctx: AppContext): Promise<DebugSnapshot> {
   const status = await buildStatus(ctx);
   const logFiles = await listLogFiles(ctx);
-  const crash = logFiles.find((f) => f.source === "crash");
+  const run = ctx.server.incidents.current;
+  const crash = logFiles.find(
+    (f) =>
+      f.source === "crash" &&
+      run &&
+      f.modifiedAt >= run.startedAt &&
+      (!run.endedAt || f.modifiedAt <= run.endedAt),
+  );
   let latestCrashReport: string | null = null;
   const rt = await focusRuntimePaths(ctx);
   if (crash && rt) {
-    const text = await fs.readFile(path.join(rt.crashReports, crash.name), "utf8").catch(() => "");
-    latestCrashReport = text.slice(0, 20_000);
+    const file = await fs.open(path.join(rt.crashReports, crash.name), "r").catch(() => null);
+    if (file) {
+      try {
+        const buffer = Buffer.alloc(20000);
+        const { bytesRead } = await file.read(buffer);
+        latestCrashReport = buffer.subarray(0, bytesRead).toString("utf8");
+      } finally {
+        await file.close();
+      }
+    }
   }
   return {
     generatedAt: new Date().toISOString(),

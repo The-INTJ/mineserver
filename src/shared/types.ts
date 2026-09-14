@@ -145,7 +145,15 @@ export interface ImportCandidate {
 
 export type TunnelMode = "off" | "playit" | "external";
 export type TunnelStatus =
-  "off" | "not_installed" | "unclaimed" | "claiming" | "stopped" | "starting" | "running" | "error";
+  | "off"
+  | "not_installed"
+  | "unclaimed"
+  | "claiming"
+  | "stopped"
+  | "starting"
+  | "running"
+  | "configured"
+  | "error";
 
 export interface TunnelState {
   mode: TunnelMode;
@@ -166,6 +174,17 @@ export interface LanInfo {
 }
 
 export interface StatusResponse {
+  reliability?: ReliabilityStatus;
+  backups?: {
+    enabled: boolean;
+    directory: string | null;
+    lastSuccessAt: string | null;
+    lastBackupAt: string | null;
+    lastError: string | null;
+    copies: number;
+    busy: boolean;
+    restoreVerifiedAt: string | null;
+  };
   server: ServerState;
   activeProfile: Profile | null;
   setup: SetupState;
@@ -248,4 +267,34 @@ export interface DebugSnapshot {
 export interface ApiError {
   error: string;
   code: string;
+}
+
+export interface RunRecord {
+  id: string;
+  profileId: string;
+  runtime: string;
+  startedAt: string;
+  readyAt: string | null;
+  endedAt: string | null;
+  pid: number | null;
+  code: number | null;
+  signal: string | null;
+  reason: string | null;
+  outcome: "starting" | "running" | "stopped" | "crashed" | "forced" | "unclean";
+  forced: boolean;
+  saveConfirmedAt: string | null;
+  lagWarnings: number;
+  worstLagMs: number;
+  logFile: string | null;
+}
+
+export interface ReliabilityStatus {
+  run: RunRecord | null;
+  loggingError: string | null;
+  recovery: {
+    enabled: boolean;
+    attempts: number;
+    nextAttemptAt: string | null;
+    blockedReason: string | null;
+  };
 }
