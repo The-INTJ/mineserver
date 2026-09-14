@@ -31,6 +31,27 @@ const MIME: Record<string, string> = {
 export function createApp(ctx: AppContext) {
   const app = new Hono();
 
+  // Block cross-site browser requests to the privileged localhost API. Native CLI/MCP
+  // calls without Origin continue to work; the development UI has its own localhost port.
+  app.use("/api/*", async (c, next) => {
+    const host = new URL(c.req.url).hostname;
+    if (!["localhost", "127.0.0.1", "[::1]"].includes(host))
+      return c.json({ error: "Localhost access required", code: "LOCAL_ONLY" }, 403);
+    const origin = c.req.header("Origin");
+    if (
+      origin &&
+      ![
+        "http://127.0.0.1:3400",
+        "http://localhost:3400",
+        "http://127.0.0.1:3401",
+        "http://localhost:3401",
+        new URL(c.req.url).origin,
+      ].includes(origin)
+    )
+      return c.json({ error: "Origin not allowed", code: "ORIGIN_DENIED" }, 403);
+    await next();
+  });
+
   app.onError((err, c) => {
     if (err instanceof AppError) {
       return c.json({ error: err.message, code: err.code } satisfies ApiError, err.status as 400);

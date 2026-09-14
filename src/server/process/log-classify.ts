@@ -32,7 +32,7 @@ export function classify(raw: string): Classified {
 
   if (DONE.test(message)) return { level, kind: "done", message };
   if (EULA.test(message)) return { level, kind: "eula", message };
-  if (CRASH.test(message) || level === "FATAL") return { level, kind: "crash", message };
+  if (CRASH.test(message)) return { level, kind: "crash", message };
   let p = JOIN.exec(message);
   if (p) return { level, kind: "join", player: p[1], message };
   p = LEFT.exec(message) ?? LOST.exec(message);

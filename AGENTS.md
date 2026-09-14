@@ -38,7 +38,9 @@ differs; the daemon picks the right JDK (25 for 26.x, 17 for 1.20.1, 21 for 1.21
 |---|---|---|
 | GET | `/status` | ServerState + active profile + setup (for the active profile's runtime) + LAN + tunnel + all runtimes |
 | POST | `/server/start` `{profileId?}` | 409 `SERVER_RUNNING` / `RUNTIME_MISSING` / `EULA_REQUIRED` / `JAVA_UNSUPPORTED` |
-| POST | `/server/stop` · `/server/restart` | stop = `stop` on stdin, 60 s, then `taskkill /T /F` |
+| POST | `/server/stop` · `/server/restart` | guardian sends `stop`, waits 60 s, then forces; save/exit recorded |
+| POST/GET | `/server/save` / `/server/incidents` | acknowledged save / last 50 persisted launches |
+| POST | `/manager/shutdown` | graceful game + manager shutdown (`npm run manager:stop`) |
 | POST | `/server/command` `{command}` · `/server/whitelist` `{name}` | stdin; 409 `SERVER_NOT_RUNNING` |
 | GET | `/logs?lines=&grep=` · `/logs/stream` (SSE) · `/logs/files` · `/logs/files/:source/:name` | source = daemon \| server \| crash (server/crash = focused runtime) |
 | GET/POST | `/setup` · `/setup/eula {accepted:true}` · `/setup/recheck-java` | |
@@ -58,12 +60,12 @@ Errors: `{ error, code }` with the HTTP status. Codes are stable.
 
 Read: `status`, `tail_logs`, `list_profiles`, `list_runtimes`, `list_mods`, `get_players`,
 `list_worlds`, `tunnel_status`, `job_status`, `list_log_files`, `read_log_file`,
-`recent_crash_report`, `debug_snapshot`.
-Action: `start_server`, `stop_server`, `restart_server`, `send_command`, `set_mod_enabled`,
+`recent_crash_report`, `debug_snapshot`, `incident_history`.
+Action: `save_server`, `start_server`, `stop_server`, `restart_server`, `send_command`, `set_mod_enabled`,
 `switch_profile`, `create_profile`, `install_runtime`, `import_modpack`, `import_world`,
 `export_client_zip`, `import_client_mods`.
 
-The daemon must be running (`npm run play` or `npm run dev`). `MINESERVER_URL` overrides the base URL.
+The daemon must be running (`npm run play` or `npm start`; use isolated data for `npm run dev`). `MINESERVER_URL` overrides the base URL.
 
 ## Diagnosis playbook
 
@@ -92,3 +94,7 @@ The daemon must be running (`npm run play` or `npm run dev`). `MINESERVER_URL` o
 - Do not delete worlds. Ever. Ask.
 - Never point a profile at a world created by a different Minecraft version.
 - Toggling mods is safe at any time (it only affects the next start).
+
+See [docs/operations.md](docs/operations.md) for guardian ownership, failure behavior, backup
+verification, production launch/stop commands, and configuration. Never deploy watch mode against
+the live world. After changing lifecycle code, test fake processes and a separate world copy.

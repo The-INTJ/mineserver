@@ -89,6 +89,7 @@ export function useStatus(intervalMs = 4000) {
 export function useLogStream(onState?: (s: ServerState) => void, cap = 1500) {
   const [lines, setLines] = useState<LogLine[]>([]);
   const lastSeq = useRef(0);
+  const session = useRef("");
   const onStateRef = useRef(onState);
   onStateRef.current = onState;
 
@@ -97,7 +98,15 @@ export function useLogStream(onState?: (s: ServerState) => void, cap = 1500) {
     let closed = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
     const connect = () => {
-      es = new EventSource(`/api/logs/stream?since=${lastSeq.current}`);
+      es = new EventSource(`/api/logs/stream?since=${lastSeq.current}&session=${session.current}`);
+      es.addEventListener("session", (ev) => {
+        const next = JSON.parse((ev as MessageEvent).data) as string;
+        if (session.current !== next) {
+          lastSeq.current = 0;
+          setLines([]);
+        }
+        session.current = next;
+      });
       es.addEventListener("log", (ev) => {
         const line = JSON.parse((ev as MessageEvent).data) as LogLine;
         lastSeq.current = line.seq;

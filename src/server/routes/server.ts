@@ -6,6 +6,15 @@ import { buildStatus } from "../snapshot.ts";
 export function serverRoutes(ctx: AppContext) {
   const app = new Hono();
 
+  app.get("/server/incidents", async (c) =>
+    c.json({ incidents: await ctx.server.incidents.list() }),
+  );
+  app.post("/server/save", async (c) => c.json(await ctx.server.save()));
+  app.post("/manager/shutdown", (c) => {
+    if (!ctx.shutdown) return c.json({ error: "Shutdown unavailable", code: "UNAVAILABLE" }, 409);
+    setTimeout(() => ctx.shutdown?.(), 100);
+    return c.json({ ok: true });
+  });
   app.get("/status", async (c) => c.json(await buildStatus(ctx)));
 
   app.post("/server/start", async (c) => {

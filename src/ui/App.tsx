@@ -38,7 +38,7 @@ export function App() {
       </header>
       <main>
         {error && (
-          <p className="notice bad">Daemon unreachable: {error}. Is `npm run dev` running?</p>
+          <p className="notice bad">Daemon unreachable: {error}. Start it with `npm run play`.</p>
         )}
         {!status && !error && <p className="muted">Connecting…</p>}
         {status && tab === "Dashboard" && <Dashboard status={status} refresh={refresh} />}

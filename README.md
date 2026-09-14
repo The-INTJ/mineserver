@@ -46,6 +46,28 @@ ever exposed. (`npm run dev` is the hot-reloading variant for working on mineser
 http://127.0.0.1:3401. It restarts the daemon, and therefore the game server, whenever you edit a
 source file, so don't use it while people are playing.)
 
+`npm run play` builds and starts the manager in the background; `npm start` reuses the existing
+build. Both return when the dashboard is ready. Select **Start** to open the saved profile.
+You can close the terminal. **Stop** requests Minecraft's normal save and shutdown; **Save now**
+waits for a `save-all flush` acknowledgement. Use `npm run manager:stop` to shut down the manager
+and gracefully stop Minecraft as well.
+
+A separate Java guardian requests a save if the manager disappears. The dashboard shows confirmed
+saves, recorded stop causes, recovery attempts and backup health. Optional crash recovery and
+second-drive FTB archive mirroring are configured in `data/reliability.json`:
+
+```json
+{
+  "autoRestart": true,
+  "backupDirectory": "D:/MineserverBackups/rolling"
+}
+```
+
+Recovery is disabled unless explicitly enabled. It retries runtime crashes up to three times in
+15 minutes and never retries an intentional Stop. Existing claimed Playit tunnels start when
+Minecraft becomes ready. See [operations and recovery](docs/operations.md) for failure behavior,
+backup verification, and rollback.
+
 ### Step 2: First-run checklist
 
 The Dashboard walks you through it: accept the Minecraft EULA, download the Fabric launcher (~180 KB;

@@ -13,12 +13,12 @@
     "dev": "concurrently -k -n daemon,ui -c blue,magenta \"npm:dev:daemon\" \"npm:dev:ui\"",
     "dev:daemon": "tsx watch src/server/main.ts",
     "daemon": "tsx src/server/main.ts",
-    "play": "npm run build && node dist/server/main.js",
+    "play": "npm run build && node dist/server/launcher.js",
     "dev:ui": "vite --port 3401 --strictPort",
     "build": "npm run build:node && npm run build:ui",
     "build:node": "tsc -p tsconfig.node.json",
     "build:ui": "vite build",
-    "start": "node dist/server/main.js",
+    "start": "node dist/server/launcher.js",
     "mcp": "node dist/mcp/main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -26,7 +26,9 @@
     "lint": "eslint src test",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"test/**/*.{ts,mjs}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"test/**/*.{ts,mjs}\"",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run build"
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "manager:stop": "node tools/stop-manager.mjs",
+    "backup:verify": "node dist/server/backups/verify-cli.js"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",

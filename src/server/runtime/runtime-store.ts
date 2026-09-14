@@ -151,6 +151,15 @@ export class RuntimeStore {
         `Need Java ${java.major} for ${runtimeId(rt)}; found ${java.version ?? "none"}`,
       );
     }
+    const diagnosticDir = path.join(this.paths(rt).dir, "logs");
+    await fs.mkdir(diagnosticDir, { recursive: true });
+    const diagnostics =
+      java.major >= 17
+        ? [
+            "-Xlog:gc*,safepoint:file=logs/gc.log:time,uptime,level,tags:filecount=4,filesize=8M",
+            "-XX:ErrorFile=logs/hs_err_pid%p.log",
+          ]
+        : [];
     const gb = Math.max(1, Math.round(jvm.maxMemoryGb));
     return {
       javaPath: java.path,
@@ -160,6 +169,7 @@ export class RuntimeStore {
         // Player names and chat can be non-ASCII; without these Windows Java writes cp1252.
         "-Dfile.encoding=UTF-8",
         "-Dstdout.encoding=UTF-8",
+        ...diagnostics,
         ...jvm.extraArgs,
         ...launchArgs(rt, this.paths(rt).dir),
       ],

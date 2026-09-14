@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { LogLine } from "../../shared/types.ts";
 import { LOG_RING_SIZE } from "../../shared/constants.ts";
@@ -8,6 +9,7 @@ import { classify } from "./log-classify.ts";
  * `?since=`. The Java process, the daemon's own notes, and playit all push here.
  */
 export class LogBuffer extends EventEmitter {
+  readonly sessionId = randomUUID();
   private lines: LogLine[] = [];
   private nextSeq = 1;
 
@@ -17,6 +19,7 @@ export class LogBuffer extends EventEmitter {
   }
 
   push(stream: LogLine["stream"], text: string): LogLine {
+    text = text.slice(0, 32768);
     const c = classify(text);
     const line: LogLine = {
       seq: this.nextSeq++,

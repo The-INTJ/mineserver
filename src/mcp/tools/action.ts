@@ -17,6 +17,14 @@ const runtimeSchema = z
 
 export function registerActionTools(mcp: McpServer, api: DaemonClient): void {
   mcp.registerTool(
+    "save_server",
+    {
+      description:
+        "Send save-all flush and wait up to 30 seconds for Minecraft to acknowledge the save. Leaves players connected.",
+    },
+    async () => json(await api.post("/server/save")),
+  );
+  mcp.registerTool(
     "start_server",
     {
       description:

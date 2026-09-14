@@ -92,6 +92,97 @@ export function Dashboard({ status, refresh }: { status: StatusResponse; refresh
               Restart
             </button>
           </div>
+          <p className="muted">
+            Stop saves players and all dimensions before exiting. If saving stalls, the server
+            allows 60 seconds before a forced stop.
+          </p>
+          <button
+            disabled={busy || s.status !== "running"}
+            onClick={() => act(() => api.post("/server/save"))}
+          >
+            Save now
+          </button>
+          {status.reliability && (
+            <dl className="kv">
+              <dt>Last confirmed save</dt>
+              <dd>
+                {status.reliability.run?.saveConfirmedAt
+                  ? new Date(status.reliability.run.saveConfirmedAt).toLocaleString()
+                  : "No save confirmation recorded yet"}
+              </dd>
+              <dt>Automatic recovery</dt>
+              <dd>
+                {status.reliability.recovery.enabled
+                  ? "Enabled (maximum 3 attempts / 15 minutes)"
+                  : "Disabled"}
+              </dd>
+              <dt>Recovery status</dt>
+              <dd>
+                {status.reliability.recovery.blockedReason ??
+                  (status.reliability.recovery.nextAttemptAt
+                    ? `Retry at ${new Date(status.reliability.recovery.nextAttemptAt).toLocaleTimeString()}`
+                    : "No retry pending")}
+              </dd>
+              <dt>Lag warnings this run</dt>
+              <dd>
+                {status.reliability.run?.lagWarnings ?? 0} · worst{" "}
+                {status.reliability.run?.worstLagMs ?? 0} ms
+              </dd>
+            </dl>
+          )}
+          {status.reliability?.loggingError && (
+            <p className="notice bad">{status.reliability.loggingError}</p>
+          )}
+          {status.backups && (
+            <dl className="kv">
+              <dt>Backup mirror</dt>
+              <dd>
+                {status.backups.enabled
+                  ? `${status.backups.copies} verified copies`
+                  : "Not configured"}
+              </dd>
+              <dt>Newest world backup</dt>
+              <dd>
+                {status.backups.lastBackupAt
+                  ? new Date(status.backups.lastBackupAt).toLocaleString()
+                  : "None observed"}
+              </dd>
+              <dt>Last mirror success</dt>
+              <dd>
+                {status.backups.lastSuccessAt
+                  ? new Date(status.backups.lastSuccessAt).toLocaleString()
+                  : "None recorded"}
+              </dd>
+              <dt>Restore test</dt>
+              <dd>
+                {status.backups.restoreVerifiedAt
+                  ? new Date(status.backups.restoreVerifiedAt).toLocaleString()
+                  : "Not yet verified"}
+              </dd>
+            </dl>
+          )}
+          {status.backups?.lastError && (
+            <p className="notice bad">Backup mirror: {status.backups.lastError}</p>
+          )}
+          {status.tunnel.mode === "external" && (
+            <p className="notice">
+              Remote access uses a separate tunnel app or port forward. Keep that connection
+              running; its saved address is not a live connection check.
+            </p>
+          )}
+          {status.backups?.enabled &&
+            s.status === "running" &&
+            s.readyAt &&
+            Date.now() -
+              Math.max(
+                Date.parse(s.readyAt),
+                Date.parse(status.backups.lastBackupAt ?? "1970-01-01"),
+              ) >
+              45 * 60000 && (
+              <p className="notice bad">
+                No completed world backup in over 45 minutes. Check FTB Backups and free disk space.
+              </p>
+            )}
           {err && <p className="error">{err}</p>}
           <div className="row" style={{ marginTop: 14 }}>
             <input

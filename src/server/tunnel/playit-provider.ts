@@ -36,6 +36,9 @@ export class PlayitProvider {
   private claim: ClaimProgress | null = null;
   private exchange: ChildProcess | null = null;
   private addressFromLog: string | null = null;
+  private starting: Promise<void> | null = null;
+  private intentionalStop = false;
+  lastError: string | null = null;
 
   constructor(
     private readonly dir: string,
@@ -114,19 +117,30 @@ export class PlayitProvider {
     child.stderr?.on("data", (d: Buffer) =>
       this.logs.push("daemon", `[playit claim] ${d.toString("utf8").trim()}`),
     );
-    child.on("exit", async (code) => {
+    child.on("error", (err) => {
       this.exchange = null;
-      const secret = parseSecret(out);
-      if (code === 0 && secret) {
-        // Same shape the agent writes itself, so `--secret_path` reads it back.
-        await fs.writeFile(this.secretFile, `secret_key = "${secret}"\n`, "utf8");
-        progress.result = "done";
-        this.logs.note("playit agent claimed; secret stored under data/playit");
-      } else {
+      progress.result = "error";
+      progress.error = `Claim process failed: ${err.message}`;
+    });
+    child.on("close", (code) => {
+      void (async () => {
+        this.exchange = null;
+        const secret = parseSecret(out);
+        if (code === 0 && secret) {
+          // Same shape the agent writes itself, so `--secret_path` reads it back.
+          await fs.writeFile(this.secretFile, `secret_key = "${secret}"\n`, "utf8");
+          progress.result = "done";
+          this.logs.note("playit agent claimed; secret stored under data/playit");
+        } else {
+          progress.result = "error";
+          progress.error = `claim exchange exited ${code}: ${out.trim().slice(-300)}`;
+          this.logs.note(`playit claim failed: ${progress.error}`);
+        }
+      })().catch((err: unknown) => {
         progress.result = "error";
-        progress.error = `claim exchange exited ${code}: ${out.trim().slice(-300)}`;
-        this.logs.note(`playit claim failed: ${progress.error}`);
-      }
+        progress.error = `Claim could not be saved: ${String(err)}`;
+        this.logs.note(progress.error);
+      });
     });
     return progress;
   }
@@ -144,6 +158,18 @@ export class PlayitProvider {
 
   async start(): Promise<void> {
     if (this.running) return;
+    if (this.starting) return this.starting;
+    this.starting = this.startInternal();
+    try {
+      await this.starting;
+    } finally {
+      this.starting = null;
+    }
+  }
+
+  private async startInternal(): Promise<void> {
+    this.intentionalStop = false;
+    this.lastError = null;
     if (!(await this.secretPresent()))
       throw conflict("PLAYIT_UNCLAIMED", "Claim the playit agent first");
     const args = ["--secret_path", this.secretFile, "--stdout", "start"];
@@ -164,19 +190,45 @@ export class PlayitProvider {
     };
     wire(child.stdout);
     wire(child.stderr);
-    child.on("exit", (code) => {
+    child.on("error", (err) => {
+      this.lastError = `Playit process failed: ${err.message}`;
+      this.logs.note(this.lastError);
+      if (this.agent === child) this.agent = null;
+    });
+    child.on("close", (code) => {
       this.logs.note(`playit agent exited (code ${code})`);
-      this.agent = null;
+      if (!this.intentionalStop)
+        this.lastError ??= `Playit agent exited (code ${code}); restart it from the Tunnel tab`;
+      if (this.agent === child) this.agent = null;
+    });
+    await new Promise<void>((resolve, reject) => {
+      child.once("spawn", resolve);
+      child.once("error", reject);
     });
   }
 
   async stop(): Promise<void> {
+    await this.starting?.catch(() => undefined);
+    this.intentionalStop = true;
     const a = this.agent;
     if (!a || a.exitCode !== null) return;
-    await new Promise<void>((resolve) => {
-      a.once("exit", () => resolve());
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        a.off("exit", done);
+        reject(new Error("Playit did not stop within 10 seconds"));
+      }, 10000);
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      a.once("exit", done);
       if (process.platform === "win32") {
-        execFile("taskkill", ["/pid", String(a.pid), "/T", "/F"], () => undefined);
+        execFile(
+          "taskkill",
+          ["/pid", String(a.pid), "/T", "/F"],
+          { windowsHide: true },
+          () => undefined,
+        );
       } else {
         a.kill("SIGTERM");
       }
@@ -188,7 +240,12 @@ export class PlayitProvider {
     if (!a || a.exitCode !== null) return;
     if (process.platform === "win32") {
       // spawnSync would be cleaner but taskkill here is best-effort during process exit.
-      execFile("taskkill", ["/pid", String(a.pid), "/T", "/F"], () => undefined);
+      execFile(
+        "taskkill",
+        ["/pid", String(a.pid), "/T", "/F"],
+        { windowsHide: true },
+        () => undefined,
+      );
     } else {
       a.kill("SIGKILL");
     }
