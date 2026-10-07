@@ -51,6 +51,7 @@ export async function buildStatus(ctx: AppContext): Promise<StatusResponse> {
     server,
     reliability: ctx.server.reliability(),
     backups: ctx.backups.status(),
+    worldBackup: ctx.worldBackups.status(),
     activeProfile,
     setup: {
       runtime,

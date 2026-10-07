@@ -30,6 +30,7 @@ async function main() {
   });
   ctx.logs.note(`manager started; pid=${process.pid}`);
   ctx.backups.start();
+  ctx.worldBackups.start();
   let wasRunning = false;
   ctx.server.on("state", (state) => {
     const running = state.status === "running";
@@ -71,6 +72,8 @@ async function main() {
       ctx.tunnel.killSync();
       process.exit(1);
     }, 70_000);
+    // Finish (or abandon) an in-flight archive before the shutdown save rewrites the world.
+    await ctx.worldBackups.stop();
     await ctx.server.dispose().catch((err: unknown) => console.error("Shutdown:", err));
     await ctx.tunnel.stop().catch(() => undefined);
     await ctx.backups.stop();

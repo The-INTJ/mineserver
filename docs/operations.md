@@ -52,7 +52,8 @@ does not continue a crashed manager unattended, survive power loss, or guarantee
 hung JVM. A forced stop is labeled explicitly; "last confirmed save" is a timestamp, not a promise
 that every action before a crash reached disk.
 
-`data/reliability.json` enables optional `autoRestart` and `backupDirectory`. Recovery waits 30,
+`data/reliability.json` enables optional `autoRestart` and `backupDirectory`, and tunes
+`worldBackupIntervalMinutes` (default 30, `0` disables) and `worldBackupKeep` (default 5). Recovery waits 30,
 60, then 120 seconds, with at most three attempts in a rolling 15-minute manager session. It is
 canceled by Stop or manager shutdown; preflight/startup failures require inspection. Recovery
 attempt counters reset when the manager itself restarts. Editing this configuration takes effect
@@ -81,15 +82,26 @@ a completed receipt is classified as unclean/unknown, not as a fabricated mod fa
 
 ## Backups and restore verification
 
-The existing pack produces FTB world backups every 30 minutes and retains five on the server
-drive. The optional mirror scans completed FTB manifests each minute. It copies an archive to a
+Forge packs with FTB Backups 2 produce their own world backups every 30 minutes and retain five on
+the server drive. Every other profile (all Fabric profiles today) is backed up by mineserver
+itself: every 30 minutes while players are online (plus one more after the last player leaves,
+if the server is still running then), it
+sends `save-off`, waits for an acknowledged `save-all flush`, zips `data/worlds/<world>` (minus
+`session.lock`) into `<runtime>/backups/`, then sends `save-on`. The archives use FTB's file names
+and `backups.json` manifest (entries marked `backupName: "mineserver"`), so the mirror and
+`backup:verify` treat both sources identically. A stop or crash during the archive discards it.
+It keeps the newest five per world and never prunes FTB's entries. The Halloween world takes about
+6 seconds and 220 MiB per archive. Dashboard "Back up now", `POST /api/server/backup` and the
+`backup_world` MCP tool take one immediately.
+
+The optional mirror scans completed FTB manifests each minute. It copies an archive to a
 temporary `.part`, checks its SHA-1 against FTB's manifest, then publishes the copy. It reserves
 2 GiB of destination free space and retains the latest 48 copies plus one from each of the seven
 most recent distinct backup dates. It deletes only mirror files it has indexed; source archives,
 world directories, and separate baseline copies are never pruned by this service.
 
 The dashboard reports newest backup time, copy success, restore-test time and errors. It warns if
-the server has been running without a completed backup for 45 minutes. Verification on copy is not
+players have been online for 45 minutes without a completed backup. Verification on copy is not
 a continuous bit-rot scan. A second internal drive protects against a single-drive failure, not
 loss of the whole computer. Save acknowledgements and world backups have different timestamps;
 FTB can lag current play by up to its scheduled interval.
