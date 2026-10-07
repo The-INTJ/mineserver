@@ -1,4 +1,5 @@
 import { BackupService } from "./backups/backup-service.ts";
+import { WorldBackupService } from "./backups/world-backup.ts";
 import { ensureDirs, resolvePaths, type Paths } from "./config.ts";
 import { JobRegistry } from "./jobs.ts";
 import { ModLibrary } from "./mods/mod-library.ts";
@@ -14,6 +15,7 @@ import { WorldStore } from "./worlds/world-store.ts";
 export interface AppContext {
   shutdown?: () => void;
   backups: BackupService;
+  worldBackups: WorldBackupService;
   paths: Paths;
   logs: LogBuffer;
   state: StateStore;
@@ -58,8 +60,31 @@ export async function createContext(opts: ContextOptions = {}): Promise<AppConte
   const jobs = new JobRegistry();
   const backups = new BackupService(paths);
   await backups.init();
+  const worldBackups = new WorldBackupService({
+    paths,
+    logs,
+    server,
+    profiles,
+    worlds,
+    runtimes,
+    onBackup: () => void backups.scan(),
+  });
+  await worldBackups.init();
   await profiles.ensureDefault();
   await server.init();
   await tunnel.init();
-  return { backups, paths, logs, state, profiles, library, worlds, runtimes, server, tunnel, jobs };
+  return {
+    backups,
+    worldBackups,
+    paths,
+    logs,
+    state,
+    profiles,
+    library,
+    worlds,
+    runtimes,
+    server,
+    tunnel,
+    jobs,
+  };
 }

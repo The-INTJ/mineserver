@@ -101,6 +101,17 @@ export function Dashboard({ status, refresh }: { status: StatusResponse; refresh
             onClick={() => act(() => api.post("/server/save"))}
           >
             Save now
+          </button>{" "}
+          <button
+            disabled={
+              busy ||
+              s.status !== "running" ||
+              !!status.worldBackup?.busy ||
+              !!status.worldBackup?.skippedReason
+            }
+            onClick={() => act(() => api.post("/server/backup"))}
+          >
+            Back up now
           </button>
           {status.reliability && (
             <dl className="kv">
@@ -153,6 +164,18 @@ export function Dashboard({ status, refresh }: { status: StatusResponse; refresh
                   ? new Date(status.backups.lastSuccessAt).toLocaleString()
                   : "None recorded"}
               </dd>
+              {status.worldBackup && (
+                <>
+                  <dt>World backups</dt>
+                  <dd>
+                    {status.worldBackup.skippedReason ??
+                      (status.worldBackup.enabled
+                        ? `Every ${status.worldBackup.intervalMinutes} min while players are online` +
+                          (status.worldBackup.busy ? " · backing up now" : "")
+                        : "Disabled in reliability.json")}
+                  </dd>
+                </>
+              )}
               <dt>Restore test</dt>
               <dd>
                 {status.backups.restoreVerifiedAt
@@ -160,6 +183,9 @@ export function Dashboard({ status, refresh }: { status: StatusResponse; refresh
                   : "Not yet verified"}
               </dd>
             </dl>
+          )}
+          {status.worldBackup?.lastError && (
+            <p className="notice bad">World backup: {status.worldBackup.lastError}</p>
           )}
           {status.backups?.lastError && (
             <p className="notice bad">Backup mirror: {status.backups.lastError}</p>
@@ -172,6 +198,7 @@ export function Dashboard({ status, refresh }: { status: StatusResponse; refresh
           )}
           {status.backups?.enabled &&
             s.status === "running" &&
+            s.players.length > 0 &&
             s.readyAt &&
             Date.now() -
               Math.max(
@@ -180,7 +207,8 @@ export function Dashboard({ status, refresh }: { status: StatusResponse; refresh
               ) >
               45 * 60000 && (
               <p className="notice bad">
-                No completed world backup in over 45 minutes. Check FTB Backups and free disk space.
+                No completed world backup in over 45 minutes while players are online. Check the
+                backup errors above and free disk space.
               </p>
             )}
           {err && <p className="error">{err}</p>}

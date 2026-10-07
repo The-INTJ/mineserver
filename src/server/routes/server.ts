@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Hono } from "hono";
 import type { AppContext } from "../context.ts";
 import { badRequest } from "../errors.ts";
@@ -10,6 +11,14 @@ export function serverRoutes(ctx: AppContext) {
     c.json({ incidents: await ctx.server.incidents.list() }),
   );
   app.post("/server/save", async (c) => c.json(await ctx.server.save()));
+  app.post("/server/backup", async (c) => {
+    const entry = await ctx.worldBackups.backup();
+    return c.json({
+      file: path.basename(entry.backupLocation),
+      sha1: entry.sha1,
+      size: entry.size,
+    });
+  });
   app.post("/manager/shutdown", (c) => {
     if (!ctx.shutdown) return c.json({ error: "Shutdown unavailable", code: "UNAVAILABLE" }, 409);
     setTimeout(() => ctx.shutdown?.(), 100);

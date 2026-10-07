@@ -102,6 +102,10 @@ forced `level-name=world`, `white-list=true`) → open a log file → spawn Java
   damage it, so missing enabled files produce `MODS_MISSING` before Java opens the world.
 - **Diagnostics are bounded.** Save acknowledgements, per-launch incident records, manager logs,
   independent guardian receipts, GC logs, and FTB mirror health are exposed in status/log endpoints.
+- **Only FTB packs back themselves up.** Fabric profiles had no world backups at all until
+  `WorldBackupService` (`src/server/backups/world-backup.ts`) — the mirror only copies archives
+  something else wrote. It writes FTB-format archives + `backups.json` into `<runtime>/backups/`
+  and stands down for any profile with an `ftbbackups*` jar enabled, so the two never share a manifest writer.
 
 
 ## Development

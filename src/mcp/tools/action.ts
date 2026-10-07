@@ -25,6 +25,14 @@ export function registerActionTools(mcp: McpServer, api: DaemonClient): void {
     async () => json(await api.post("/server/save")),
   );
   mcp.registerTool(
+    "backup_world",
+    {
+      description:
+        "Archive the running world now: save-off, acknowledged save-all flush, zip to <runtime>/backups (FTB manifest format, mirrored to the backup directory), save-on. Players stay connected. Fails with SERVER_NOT_RUNNING, BACKUP_RUNNING, or BACKUP_BY_MOD when the profile's FTB Backups mod owns backups. Runs automatically every 30 minutes while players are online.",
+    },
+    async () => json(await api.post("/server/backup")),
+  );
+  mcp.registerTool(
     "start_server",
     {
       description:

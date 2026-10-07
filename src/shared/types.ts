@@ -173,6 +173,21 @@ export interface LanInfo {
   port: number;
 }
 
+/** mineserver's own periodic world archives, for profiles without a backup mod. */
+export interface WorldBackupStatus {
+  enabled: boolean;
+  /** 0 when disabled via `worldBackupIntervalMinutes: 0` in data/reliability.json. */
+  intervalMinutes: number;
+  /** Archives kept per world in <runtime>/backups (the mirror keeps more). */
+  keep: number;
+  busy: boolean;
+  lastFile: string | null;
+  lastAt: string | null;
+  lastError: string | null;
+  /** Set when the active profile's own backup mod (FTB Backups) is responsible instead. */
+  skippedReason: string | null;
+}
+
 export interface StatusResponse {
   reliability?: ReliabilityStatus;
   backups?: {
@@ -185,6 +200,7 @@ export interface StatusResponse {
     busy: boolean;
     restoreVerifiedAt: string | null;
   };
+  worldBackup?: WorldBackupStatus;
   server: ServerState;
   activeProfile: Profile | null;
   setup: SetupState;

@@ -27,6 +27,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     say("INFO", "Saving players");
     say("INFO", "ThreadedAnvilChunkStorage: All dimensions are saved");
     setTimeout(() => process.exit(0), 20);
+  } else if (cmd === "save-off") {
+    say("INFO", "Automatic saving is now disabled");
+  } else if (cmd === "save-on") {
+    say("INFO", "Automatic saving is now enabled");
   } else if (cmd === "save-all flush") {
     say("INFO", "Saved the game");
   } else if (cmd === "crash-now") {
